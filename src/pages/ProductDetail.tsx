@@ -16,12 +16,20 @@ import {
 
 import { products } from '../data/products.ts';
 import ProductCard from '../components/common/ProductCard.tsx';
+import ClientRegistrationModal from '../components/common/ClientRegistrationModal.tsx';
+import {
+  saveClientData,
+  getClientByBearerToken,
+  type CreateClientResponse,
+} from '../services/api.ts';
 
 const ProductDetailPage = () => {
   const { id } = useParams<{ id: string }>();
 
   const product = useMemo(() => products.find((p) => p.id === id), [id]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
 
   // Produtos relacionados (outros produtos excluindo o atual)
   const relatedProducts = useMemo(() => products.filter((p) => p.id !== id), [id]);
@@ -31,6 +39,34 @@ const ProductDetailPage = () => {
   }
 
   const selectedImage = product.images[selectedImageIndex] || product.heroImage;
+
+  const handleBuyClick = async () => {
+    setIsLoading(true);
+    try {
+      const response = await getClientByBearerToken();
+
+      // Verifica se é um erro NOT_FOUND
+      if ('error' in response && response.error.code === 'NOT_FOUND') {
+        setIsClientModalOpen(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // Se retornou dados do cliente, salva no localStorage
+      if ('data' in response) {
+        saveClientData(response as CreateClientResponse);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar cliente:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClientRegistrationSuccess = () => {
+    // Fecha o modal após cadastro bem-sucedido
+    setIsClientModalOpen(false);
+  };
 
   return (
     <Stack spacing={{ xs: 6, md: 10 }} pb={{ xs: 8, md: 12 }}>
@@ -151,9 +187,8 @@ const ProductDetailPage = () => {
 
             <Button
               variant="contained"
-              href={product.whatsappLink || 'https://w.app/logani'}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={handleBuyClick}
+              disabled={isLoading}
               sx={{
                 bgcolor: '#2C2727',
                 color: '#fff',
@@ -167,9 +202,13 @@ const ProductDetailPage = () => {
                 '&:hover': {
                   bgcolor: '#1a1a1a',
                 },
+                '&:disabled': {
+                  bgcolor: '#2C2727',
+                  opacity: 0.6,
+                },
               }}
             >
-              Comprar
+              {isLoading ? 'Verificando...' : 'Comprar'}
             </Button>
           </Stack>
         </Box>
@@ -511,6 +550,13 @@ const ProductDetailPage = () => {
           </Box>
         </Container>
       )}
+
+      {/* Modal de Cadastro de Cliente */}
+      <ClientRegistrationModal
+        open={isClientModalOpen}
+        onClose={() => setIsClientModalOpen(false)}
+        onSuccess={handleClientRegistrationSuccess}
+      />
     </Stack>
   );
 };
