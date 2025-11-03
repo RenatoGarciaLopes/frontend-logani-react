@@ -140,7 +140,7 @@ const ProductsPage = () => {
                       flexShrink: 0,
                     }}
                   >
-                    <ProductCard product={product} to={`/produtos#${product.id}`} />
+                    <ProductCard product={product} to={`/produtos/${product.id}`} />
                   </Box>
                 ))}
               </AnimatePresence>

@@ -107,7 +107,7 @@ const HomePage = () => {
                 flexShrink: 0,
               }}
             >
-              <ProductCard product={product} />
+              <ProductCard product={product} to={`/produtos/${product.id}`} />
             </Box>
           ))}
         </Box>
