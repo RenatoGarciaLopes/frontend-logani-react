@@ -1,17 +1,21 @@
 import { useMemo, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 
+import AddIcon from '@mui/icons-material/Add';
+import RemoveIcon from '@mui/icons-material/Remove';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
   Box,
   Stack,
   Button,
   Divider,
-  Container,
   Accordion,
+  Container,
+  TextField,
+  IconButton,
   Typography,
-  AccordionSummary,
   AccordionDetails,
+  AccordionSummary,
 } from '@mui/material';
 
 import { products } from '../data/products.ts';
@@ -20,7 +24,8 @@ import ClientRegistrationModal from '../components/common/ClientRegistrationModa
 import {
   saveClientData,
   getClientByBearerToken,
-  type CreateClientResponse,
+  handleOrderAfterClientSave,
+  type GetClientByBearerTokenResponse,
 } from '../services/api.ts';
 
 const ProductDetailPage = () => {
@@ -30,6 +35,7 @@ const ProductDetailPage = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [quantity, setQuantity] = useState(1);
 
   // Produtos relacionados (outros produtos excluindo o atual)
   const relatedProducts = useMemo(() => products.filter((p) => p.id !== id), [id]);
@@ -54,7 +60,12 @@ const ProductDetailPage = () => {
 
       // Se retornou dados do cliente, salva no localStorage
       if ('data' in response) {
-        saveClientData(response as CreateClientResponse);
+        saveClientData(response as GetClientByBearerTokenResponse);
+        // Gerencia o pedido após salvar os dados do cliente
+        // Usa o ID do produto (assumindo que o backend espera um ID numérico)
+        // Se o backend espera outro formato, ajuste aqui
+        const productId = product.id; // ou um mapeamento para ID numérico
+        await handleOrderAfterClientSave(productId, quantity);
       }
     } catch (error) {
       console.error('Erro ao buscar cliente:', error);
@@ -174,16 +185,106 @@ const ProductDetailPage = () => {
               {product.code} {product.name.toUpperCase()}
             </Typography>
 
-            <Typography
-              variant="h5"
+            <Box
               sx={{
-                fontSize: { xs: '1.5rem', md: '1.875rem' },
-                fontWeight: 400,
-                color: 'text.secondary',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                flexWrap: 'wrap',
               }}
             >
-              R$ {product.price.toFixed(2).replace('.', ',')}
-            </Typography>
+              <Typography
+                variant="h5"
+                sx={{
+                  fontSize: { xs: '1.5rem', md: '1.875rem' },
+                  fontWeight: 400,
+                  color: 'text.secondary',
+                }}
+              >
+                R$ {product.price.toFixed(2).replace('.', ',')}
+              </Typography>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  border: '1px solid',
+                  borderColor: 'rgba(106, 96, 96, 0.25)',
+                  borderRadius: 999,
+                  bgcolor: 'background.paper',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                  height: { xs: 36, md: 44 },
+                  px: 0.5,
+                }}
+              >
+                <IconButton
+                  aria-label="Diminuir quantidade"
+                  size="small"
+                  onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
+                  disabled={quantity <= 1}
+                  sx={{
+                    width: { xs: 32, md: 40 },
+                    height: { xs: 32, md: 40 },
+                    color: '#6A6060',
+                    '&.Mui-disabled': {
+                      color: 'rgba(0, 0, 0, 0.26)',
+                    },
+                  }}
+                >
+                  <RemoveIcon sx={{ fontSize: { xs: 16, md: 18 } }} />
+                </IconButton>
+                <TextField
+                  type="number"
+                  value={quantity}
+                  onChange={(e) => {
+                    const value = Number.parseInt(e.target.value, 10) || 1;
+                    setQuantity(Math.max(1, Math.min(10, value)));
+                  }}
+                  inputProps={{
+                    min: 1,
+                    max: 10,
+                    style: { textAlign: 'center' },
+                  }}
+                  sx={{
+                    width: { xs: 40, md: 52 },
+                    height: '100%',
+                    '& .MuiOutlinedInput-root': {
+                      height: '100%',
+                      '& fieldset': { border: 'none' },
+                      '& input': {
+                        padding: 0,
+                        height: '100%',
+                        fontSize: { xs: '1rem', md: '1.125rem' },
+                        color: '#2C2727',
+                        fontWeight: 400,
+                        letterSpacing: '0.02em',
+                        '&::-webkit-outer-spin-button, &::-webkit-inner-spin-button': {
+                          WebkitAppearance: 'none',
+                          margin: 0,
+                        },
+                        MozAppearance: 'textfield',
+                      },
+                    },
+                  }}
+                />
+                <IconButton
+                  aria-label="Aumentar quantidade"
+                  size="small"
+                  onClick={() => setQuantity((prev) => Math.min(10, prev + 1))}
+                  disabled={quantity >= 10}
+                  sx={{
+                    width: { xs: 32, md: 40 },
+                    height: { xs: 32, md: 40 },
+                    color: '#6A6060',
+                    '&.Mui-disabled': {
+                      color: 'rgba(0, 0, 0, 0.26)',
+                    },
+                  }}
+                >
+                  <AddIcon sx={{ fontSize: { xs: 16, md: 18 } }} />
+                </IconButton>
+              </Box>
+            </Box>
 
             <Button
               variant="contained"
@@ -208,7 +309,7 @@ const ProductDetailPage = () => {
                 },
               }}
             >
-              {isLoading ? 'Verificando...' : 'Comprar'}
+              Comprar
             </Button>
           </Stack>
         </Box>

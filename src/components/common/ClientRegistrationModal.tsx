@@ -1,31 +1,31 @@
 import * as yup from 'yup';
-import { useState, useEffect } from 'react';
 import { useFormik } from 'formik';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 import CloseIcon from '@mui/icons-material/Close';
 import IconButton from '@mui/material/IconButton';
 import {
   Box,
+  Step,
   Alert,
   Modal,
   Stack,
   Button,
+  Stepper,
   Backdrop,
   TextField,
-  Typography,
-  CircularProgress,
-  Stepper,
-  Step,
   StepLabel,
+  Typography,
   InputAdornment,
+  CircularProgress,
 } from '@mui/material';
 
 import {
+  getAuthData,
   createClient,
   saveClientData,
-  CreateClientRequest,
-  getAuthData,
+  type CreateClientRequest,
 } from '../../services/api.ts';
 
 interface ClientRegistrationModalProps {
@@ -329,7 +329,7 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
   };
 
   const handleCEPBlur = () => {
-    formik.handleBlur({ target: { name: 'address.postal_code' } } as any);
+    formik.handleBlur({ target: { name: 'address.postal_code' } } as { target: { name: string } });
     const cep = formik.values.address.postal_code;
     if (cep.replace(/\D/g, '').length === 8) {
       fetchAddressByCEP(cep);
@@ -400,9 +400,11 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
                 formik.setFieldValue('address.postal_code', formatted);
               }}
               onBlur={handleCEPBlur}
-              error={formik.touched.postal_code && Boolean(formik.errors.address?.postal_code)}
+              error={
+                formik.touched.address?.postal_code && Boolean(formik.errors.address?.postal_code)
+              }
               helperText={
-                formik.touched.postal_code && formik.errors.address?.postal_code
+                formik.touched.address?.postal_code && formik.errors.address?.postal_code
                   ? formik.errors.address.postal_code
                   : isLoadingCEP
                     ? 'Buscando endereço...'
@@ -440,8 +442,8 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
                 value={formik.values.address.number}
                 onChange={formik.handleChange}
                 onBlur={formik.handleBlur}
-                error={formik.touched.number && Boolean(formik.errors.address?.number)}
-                helperText={formik.touched.number && formik.errors.address?.number}
+                error={formik.touched.address?.number && Boolean(formik.errors.address?.number)}
+                helperText={formik.touched.address?.number && formik.errors.address?.number}
                 disabled={!cepValidated}
               />
               <TextField
@@ -452,8 +454,10 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
                 value={formik.values.address.complement}
                 onChange={formik.handleChange}
                 onBlur={formik.handleBlur}
-                error={formik.touched.complement && Boolean(formik.errors.address?.complement)}
-                helperText={formik.touched.complement && formik.errors.address?.complement}
+                error={
+                  formik.touched.address?.complement && Boolean(formik.errors.address?.complement)
+                }
+                helperText={formik.touched.address?.complement && formik.errors.address?.complement}
                 disabled={!cepValidated}
               />
             </Stack>
@@ -465,8 +469,8 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
               value={formik.values.address.province}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
-              error={formik.touched.province && Boolean(formik.errors.address?.province)}
-              helperText={formik.touched.province && formik.errors.address?.province}
+              error={formik.touched.address?.province && Boolean(formik.errors.address?.province)}
+              helperText={formik.touched.address?.province && formik.errors.address?.province}
               disabled={!cepValidated}
             />
             <Stack direction="row" spacing={2}>
@@ -478,8 +482,8 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
                 value={formik.values.address.city}
                 onChange={formik.handleChange}
                 onBlur={formik.handleBlur}
-                error={formik.touched.city && Boolean(formik.errors.address?.city)}
-                helperText={formik.touched.city && formik.errors.address?.city}
+                error={formik.touched.address?.city && Boolean(formik.errors.address?.city)}
+                helperText={formik.touched.address?.city && formik.errors.address?.city}
                 disabled={!cepValidated}
               />
               <TextField
@@ -492,8 +496,8 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
                   formik.setFieldValue('address.state', e.target.value.toUpperCase().slice(0, 2));
                 }}
                 onBlur={formik.handleBlur}
-                error={formik.touched.state && Boolean(formik.errors.address?.state)}
-                helperText={formik.touched.state && formik.errors.address?.state}
+                error={formik.touched.address?.state && Boolean(formik.errors.address?.state)}
+                helperText={formik.touched.address?.state && formik.errors.address?.state}
                 inputProps={{ maxLength: 2 }}
                 disabled={!cepValidated}
               />

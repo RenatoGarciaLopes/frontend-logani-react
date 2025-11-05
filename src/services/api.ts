@@ -50,6 +50,17 @@ export interface LoginResponse {
   data: LoginData;
 }
 
+export interface RefreshTokenData {
+  access: string;
+  refresh: string;
+  expires_at: number;
+}
+
+export interface RefreshTokenResponse {
+  message: string;
+  data: RefreshTokenData;
+}
+
 const STORAGE_KEYS = {
   USER: 'auth_user',
   ACCESS_TOKEN: 'auth_access_token',
@@ -58,6 +69,8 @@ const STORAGE_KEYS = {
   CLIENT_ASAAS_ID: 'client_asaas_id',
   CLIENT_CPF: 'client_cpf',
   CLIENT_ADDRESS: 'client_address',
+  ORDER_ID: 'order_id',
+  ORDER_EXTERNAL_REFERENCE: 'order_external_reference',
 } as const;
 
 export const saveAuthData = (loginData: LoginData): void => {
@@ -86,16 +99,201 @@ export const getAuthData = (): {
   };
 };
 
-// Interceptor para adicionar token automaticamente
+// Flag para evitar múltiplos refreshes simultâneos
+let isRefreshing = false;
+// Fila de requisições que aguardam o refresh
+let failedQueue: Array<{
+  resolve: (value?: unknown) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+
+// Função para processar a fila de requisições após o refresh
+const processQueue = (error: Error | null, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+
+  failedQueue = [];
+};
+
+// Função para verificar se o token está expirado ou próximo de expirar
+const isTokenExpired = (expiresAt: number | null): boolean => {
+  if (!expiresAt) return true;
+  // Margem de segurança de 30 segundos antes da expiração
+  const marginSeconds = 30;
+  const expirationTime = expiresAt * 1000; // Converte para milissegundos
+  const currentTime = Date.now();
+  return currentTime >= expirationTime - marginSeconds * 1000;
+};
+
+// Função para fazer refresh do token
+const refreshToken = async (): Promise<string> => {
+  const { refreshToken: refreshTokenValue } = getAuthData();
+
+  if (!refreshTokenValue) {
+    throw new Error('Refresh token não encontrado');
+  }
+
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    // Cria uma instância do axios sem interceptors para evitar loop infinito
+    const refreshApi = axios.create({
+      baseURL: API_URL,
+      headers: {
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
+
+    const response = await refreshApi.post<RefreshTokenResponse>('/users/refresh-token/', {
+      refresh: refreshTokenValue,
+    });
+
+    // A resposta vem aninhada em { message, data }
+    const { access, refresh, expires_at } = response.data.data;
+
+    // Atualiza os tokens no localStorage
+    const { user } = getAuthData();
+    if (user) {
+      saveAuthData({
+        user,
+        access,
+        refresh,
+        expires_at,
+      });
+    }
+
+    return access;
+  } catch (error) {
+    // Se o refresh falhar, limpa os dados de autenticação
+    console.error('Erro ao renovar token:', error);
+    clearAuthData();
+    throw new Error('Falha ao renovar token. Faça login novamente.');
+  }
+};
+
+// Interceptor para adicionar token automaticamente e verificar expiração
 api.interceptors.request.use(
-  (config) => {
-    const { accessToken } = getAuthData();
-    if (accessToken) {
+  async (config) => {
+    const { accessToken, expiresAt } = getAuthData();
+
+    // Se não houver token, continua normalmente (pode ser uma requisição pública)
+    if (!accessToken) {
+      return config;
+    }
+
+    // Verifica se o token está expirado ou próximo de expirar
+    if (isTokenExpired(expiresAt)) {
+      // Se já está fazendo refresh, aguarda na fila
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            if (token && typeof token === 'string') {
+              config.headers.Authorization = `Bearer ${token}`;
+            } else {
+              const { accessToken: newToken } = getAuthData();
+              if (newToken) {
+                config.headers.Authorization = `Bearer ${newToken}`;
+              }
+            }
+            return config;
+          })
+          .catch((err) => {
+            return Promise.reject(err);
+          });
+      }
+
+      // Inicia o processo de refresh
+      isRefreshing = true;
+
+      try {
+        const newAccessToken = await refreshToken();
+        processQueue(null, newAccessToken);
+        config.headers.Authorization = `Bearer ${newAccessToken}`;
+      } catch (error) {
+        processQueue(error as Error, null);
+        return Promise.reject(error);
+      } finally {
+        isRefreshing = false;
+      }
+    } else {
+      // Token ainda válido, adiciona normalmente
       config.headers.Authorization = `Bearer ${accessToken}`;
     }
+
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Interceptor para tratar erros 401 e fazer refresh automático
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Se o erro for 401 e não for uma tentativa de refresh
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/users/refresh-token/')
+    ) {
+      // Marca a requisição como retry para evitar loops
+      originalRequest._retry = true;
+
+      // Se já está fazendo refresh, aguarda na fila
+      if (isRefreshing) {
+        return new Promise((resolve, reject) => {
+          failedQueue.push({
+            resolve: (token) => {
+              if (token && typeof token === 'string') {
+                originalRequest.headers.Authorization = `Bearer ${token}`;
+              } else {
+                const { accessToken: newToken } = getAuthData();
+                if (newToken) {
+                  originalRequest.headers.Authorization = `Bearer ${newToken}`;
+                }
+              }
+              resolve(api(originalRequest));
+            },
+            reject: (err) => reject(err),
+          });
+        });
+      }
+
+      // Inicia o processo de refresh
+      isRefreshing = true;
+
+      try {
+        const newAccessToken = await refreshToken();
+        processQueue(null, newAccessToken);
+
+        // Atualiza o header da requisição original
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+
+        // Reexecuta a requisição original
+        return api(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError as Error, null);
+        // Se o refresh falhar, limpa os dados e rejeita o erro
+        clearAuthData();
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+
     return Promise.reject(error);
   }
 );
@@ -222,6 +420,25 @@ export interface AsaasResponse {
   country: string;
 }
 
+export interface ClientData {
+  id: string;
+  name: string;
+  cpf: string;
+  phone: string | null;
+  mobile_phone: string;
+  registration_date: string;
+  active: boolean;
+  asaas_id: string;
+  address: ClientAddress;
+}
+
+export interface GetClientByBearerTokenResponse {
+  data: {
+    user: User;
+    client: ClientData;
+  };
+}
+
 export interface CreateClientResponse {
   message: string;
   data: {
@@ -243,7 +460,7 @@ export interface ClientNotFoundError {
 
 // Função para buscar cliente pelo bearer token
 export const getClientByBearerToken = async (): Promise<
-  CreateClientResponse | ClientNotFoundError
+  GetClientByBearerTokenResponse | ClientNotFoundError
 > => {
   if (!API_URL) {
     throw new Error('URL da API não configurada');
@@ -255,7 +472,9 @@ export const getClientByBearerToken = async (): Promise<
   }
 
   try {
-    const response = await api.get<CreateClientResponse>('/clients/client-by-bearer-token', {});
+    const response = await api.get<GetClientByBearerTokenResponse>(
+      '/clients/client-by-bearer-token'
+    );
     return response.data;
   } catch (error: unknown) {
     if (
@@ -278,7 +497,7 @@ export const createClient = async (
   }
 
   try {
-    const response = await api.post<CreateClientResponse>('/clients/', clientData);
+    const response = await api.post<CreateClientResponse>('/clients/create/', clientData);
     return response.data;
   } catch (error) {
     const errorMessage = extractErrorMessage(error, 'Erro ao criar cliente. Tente novamente.');
@@ -287,22 +506,38 @@ export const createClient = async (
 };
 
 // Funções para gerenciar dados do cliente no localStorage
-export const saveClientData = (clientResponse: CreateClientResponse): void => {
-  const { asaas_id, cpf, asaas_response } = clientResponse.data;
+export const saveClientData = (
+  clientResponse: CreateClientResponse | GetClientByBearerTokenResponse
+): void => {
+  let asaasId: string;
+  let cpf: string;
+  let addressData: ClientAddress;
 
-  localStorage.setItem(STORAGE_KEYS.CLIENT_ASAAS_ID, asaas_id);
+  // Verifica se é a resposta de criação (CreateClientResponse) ou busca (GetClientByBearerTokenResponse)
+  if ('client' in clientResponse.data) {
+    // Resposta de getClientByBearerToken
+    const { asaas_id: asaasIdValue, cpf: clientCpf, address } = clientResponse.data.client;
+    asaasId = asaasIdValue;
+    cpf = clientCpf;
+    addressData = address;
+  } else {
+    // Resposta de createClient (CreateClientResponse)
+    const { asaas_id, cpf: clientCpf, asaas_response } = clientResponse.data;
+    asaasId = asaas_id;
+    cpf = clientCpf;
+    addressData = {
+      postal_code: asaas_response.postalCode,
+      number: asaas_response.addressNumber,
+      address: asaas_response.address,
+      city: asaas_response.cityName,
+      state: asaas_response.state,
+      complement: asaas_response.complement || '',
+      province: asaas_response.province,
+    };
+  }
+
+  localStorage.setItem(STORAGE_KEYS.CLIENT_ASAAS_ID, asaasId);
   localStorage.setItem(STORAGE_KEYS.CLIENT_CPF, cpf);
-
-  const addressData = {
-    postal_code: asaas_response.postalCode,
-    number: asaas_response.addressNumber,
-    address: asaas_response.address,
-    city: asaas_response.cityName,
-    state: asaas_response.state,
-    complement: asaas_response.complement || '',
-    province: asaas_response.province,
-  };
-
   localStorage.setItem(STORAGE_KEYS.CLIENT_ADDRESS, JSON.stringify(addressData));
 };
 
@@ -320,4 +555,172 @@ export const getClientData = (): {
     cpf,
     address: addressStr ? JSON.parse(addressStr) : null,
   };
+};
+
+// Interfaces para Pedidos
+export interface OrderItem {
+  product_id: string | number;
+  quantity: number;
+}
+
+export interface CreateOrderRequest {
+  items: OrderItem[];
+}
+
+export interface OrderItemResponse {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+}
+
+export interface CreateOrderResponse {
+  message: string;
+  data: {
+    order_id: string;
+    external_reference: string;
+    client: {
+      id: string;
+      name: string;
+    };
+    items: OrderItemResponse[];
+    subtotal: number;
+    total: number;
+    total_items: number;
+    status: string;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+    confirmed_at: string | null;
+  };
+}
+
+export interface OrderItemInOrder {
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+}
+
+export interface Order {
+  order_id: string;
+  external_reference: string;
+  total: number;
+  subtotal: number;
+  status: string;
+  total_items: number;
+  items: OrderItemInOrder[];
+  created_at: string;
+  updated_at: string;
+  confirmed_at: string | null;
+}
+
+export interface MyOrdersResponse {
+  message: string;
+  data: {
+    orders: Order[];
+    count: number;
+    filters_applied: {
+      status: string | null;
+      exclude_cancelled: boolean;
+    };
+  };
+}
+
+export interface UpdateOrderItem {
+  action: 'add' | 'remove' | 'update';
+  product_id: string | number;
+  quantity?: number;
+}
+
+export interface UpdateOrderRequest {
+  items: UpdateOrderItem[];
+}
+
+export interface UpdateOrderResponse {
+  message: string;
+  data: unknown;
+}
+
+// Função para buscar meus pedidos
+export const getMyOrders = async (status?: string): Promise<MyOrdersResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const params = status ? { status } : {};
+    const response = await api.get<MyOrdersResponse>('/orders/my-orders/', { params });
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao buscar pedidos. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
+// Função para criar pedido
+export const createOrder = async (orderData: CreateOrderRequest): Promise<CreateOrderResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<CreateOrderResponse>('/orders/create/', orderData);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao criar pedido. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
+// Função para atualizar pedido
+export const updateOrder = async (
+  orderId: string,
+  updateData: UpdateOrderRequest
+): Promise<UpdateOrderResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.patch<UpdateOrderResponse>(`/orders/update/${orderId}/`, updateData);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao atualizar pedido. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
+// Função para salvar dados do pedido no localStorage
+export const saveOrderData = (orderId: string, externalReference: string): void => {
+  localStorage.setItem(STORAGE_KEYS.ORDER_ID, orderId);
+  localStorage.setItem(STORAGE_KEYS.ORDER_EXTERNAL_REFERENCE, externalReference);
+};
+
+// Função para gerenciar pedido após salvar dados do cliente
+export const handleOrderAfterClientSave = async (
+  productId: string | number,
+  quantity: number = 1
+): Promise<void> => {
+  try {
+    // Verifica se já existe pedidos
+    const myOrders = await getMyOrders();
+
+    // Se não houver pedidos, cria um novo
+    if (myOrders.data.count === 0) {
+      const createResponse = await createOrder({
+        items: [{ product_id: productId, quantity }],
+      });
+
+      const { order_id, external_reference } = createResponse.data;
+
+      // Salva no localStorage
+      saveOrderData(order_id, external_reference);
+    }
+  } catch (error) {
+    console.error('Erro ao gerenciar pedido:', error);
+    // Não lança erro para não quebrar o fluxo principal
+  }
 };
