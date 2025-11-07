@@ -1,7 +1,7 @@
 import * as yup from 'yup';
-import { useEffect, useMemo, useState } from 'react';
 import { useFormik } from 'formik';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
@@ -21,7 +21,13 @@ import {
   CircularProgress,
 } from '@mui/material';
 
-import { forgotPassword, login, register, resetPassword, saveAuthData } from '../../services/api.ts';
+import {
+  login,
+  register,
+  saveAuthData,
+  resetPassword,
+  forgotPassword,
+} from '../../services/api.ts';
 
 export type LoginModalMode = 'login' | 'register' | 'forgotPassword' | 'resetPassword';
 
@@ -44,7 +50,10 @@ const getValidationSchema = (mode: LoginModalMode) => {
   const emailSchema = yup.string().email('Email inválido').required('Email é obrigatório');
   const passwordSchema = yup
     .string()
-    .min(6, 'Senha deve ter no mínimo 6 caracteres')
+    .min(8, 'Senha deve ter no mínimo 8 caracteres')
+    .matches(/[A-Z]/, 'Senha deve conter ao menos uma letra maiúscula')
+    .matches(/\d/, 'Senha deve conter ao menos um dígito numérico')
+    .matches(/[^A-Za-z0-9]/, 'Senha deve incluir ao menos um caractere especial')
     .required('Senha é obrigatória');
 
   switch (mode) {
@@ -89,17 +98,20 @@ const LoginModal = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleModeUpdate = (nextMode: LoginModalMode) => {
-    if (mode === nextMode) {
-      return;
-    }
-    setMode(nextMode);
-    onModeChange?.(nextMode);
-  };
+  const handleModeUpdate = useCallback(
+    (nextMode: LoginModalMode) => {
+      if (mode === nextMode) {
+        return;
+      }
+      setMode(nextMode);
+      onModeChange?.(nextMode);
+    },
+    [mode, onModeChange]
+  );
 
   useEffect(() => {
     handleModeUpdate(initialMode);
-  }, [initialMode]);
+  }, [initialMode, handleModeUpdate]);
 
   useEffect(() => {
     setCurrentResetToken(resetToken);
@@ -216,19 +228,19 @@ const LoginModal = ({
     enableReinitialize: true,
   });
 
-  const resetFormState = () => {
+  const resetFormState = useCallback(() => {
     formik.resetForm();
     setError(null);
     setSuccessMessage(null);
     setShowPassword(false);
-  };
+  }, [formik]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
     resetFormState();
-  }, [mode, open]);
+  }, [mode, open, resetFormState]);
 
   const handleModeSwitch = () => {
     const nextMode = mode === 'login' ? 'register' : 'login';
@@ -295,12 +307,12 @@ const LoginModal = ({
   })();
 
   const isEmailFieldVisible = mode !== 'resetPassword';
-  const isPasswordFieldVisible = mode === 'login' || mode === 'register' || mode === 'resetPassword';
+  const isPasswordFieldVisible =
+    mode === 'login' || mode === 'register' || mode === 'resetPassword';
   const showForgotPasswordLink = mode === 'login' && !successMessage;
   const isSubmitDisabled =
     isLoading || !!successMessage || (mode === 'resetPassword' && !currentResetToken);
-  const areFieldsDisabled =
-    !!successMessage || (mode === 'resetPassword' && !currentResetToken);
+  const areFieldsDisabled = !!successMessage || (mode === 'resetPassword' && !currentResetToken);
 
   return (
     <Modal
@@ -398,7 +410,7 @@ const LoginModal = ({
               <form onSubmit={formik.handleSubmit}>
                 <Stack spacing={3}>
                   {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
+                    <Alert severity="error" sx={{ mb: 4 }}>
                       {error}
                     </Alert>
                   )}
@@ -422,7 +434,7 @@ const LoginModal = ({
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.3, ease: 'easeInOut' }}
-                        style={{ overflow: 'visible', marginTop: 0 }}
+                        style={{ overflow: 'visible' }}
                       >
                         <TextField
                           fullWidth
@@ -493,7 +505,9 @@ const LoginModal = ({
                       value={formik.values.confirmPassword}
                       onChange={formik.handleChange}
                       onBlur={formik.handleBlur}
-                      error={formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)}
+                      error={
+                        formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)
+                      }
                       helperText={formik.touched.confirmPassword && formik.errors.confirmPassword}
                       disabled={areFieldsDisabled}
                       InputProps={{
@@ -599,7 +613,9 @@ const LoginModal = ({
                     {(mode === 'forgotPassword' || mode === 'resetPassword') && (
                       <>
                         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
-                          {mode === 'forgotPassword' ? 'Lembrou da senha?' : 'Deseja acessar sua conta?'}
+                          {mode === 'forgotPassword'
+                            ? 'Lembrou da senha?'
+                            : 'Deseja acessar sua conta?'}
                         </Typography>
                         <Link
                           component="button"
