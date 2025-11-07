@@ -7,7 +7,6 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import {
   Box,
-  Link,
   Grid,
   Stack,
   Button,
@@ -35,10 +34,15 @@ import {
   updateClient,
   getClientData,
   saveClientData,
+  createCheckout,
   addOrderShipping,
   calculateShipping,
   getClientByBearerToken,
+  type CheckoutChargeType,
+  type CheckoutPaymentMethod,
 } from '../services/api.ts';
+
+const API_URL = import.meta.env.VITE_API_URL;
 
 const BRAZILIAN_STATES = [
   'AC',
@@ -374,6 +378,13 @@ const Checkout = () => {
 
       // Atualiza o endereço do cliente se houver mudanças
       const latestClient = getClientData();
+      const customerId = latestClient.asaasId;
+
+      if (!customerId) {
+        console.error('ID do cliente (ASAAS) não encontrado no localStorage.');
+        alert('Não foi possível iniciar o pagamento. Faça login novamente.');
+        return;
+      }
       const newAddress = mapDeliveryFormToClientAddress({
         postalCode: deliveryForm.postalCode,
         number: deliveryForm.number,
@@ -392,8 +403,34 @@ const Checkout = () => {
       const shippingPayload = mapShippingOptionToAddShippingRequest(selectedShipping);
       await addOrderShipping(currentOrder.order_id, shippingPayload);
 
-      // Próximos passos do pagamento podem ser adicionados aqui
-      console.log('Endereço atualizado (se necessário) e frete adicionado ao pedido.');
+      // const frontUrl = window.location.origin;
+      const chargeTypes: CheckoutChargeType[] = ['DETACHED', 'INSTALLMENT'];
+      const paymentMethods: CheckoutPaymentMethod[] = ['PIX', 'CREDIT_CARD'];
+
+      const checkoutPayload = {
+        customer: customerId,
+        chargeTypes,
+        minutesToExpire: 60,
+        callback: {
+          successUrl: `${API_URL}/sucesso`,
+          cancelUrl: `${API_URL}/falha`,
+          expiredUrl: `${API_URL}/expirado`,
+        },
+        paymentMethods,
+        installment: {
+          maxInstallmentCount: 5,
+        },
+        externalReference: currentOrder.external_reference,
+      };
+
+      const checkoutResponse = await createCheckout(checkoutPayload);
+      const checkoutUrl = checkoutResponse?.data?.checkout_url;
+
+      if (!checkoutUrl) {
+        throw new Error('URL do checkout não foi retornada.');
+      }
+
+      window.location.href = checkoutUrl;
     } catch (error) {
       console.error('Erro ao processar pagamento:', error);
     } finally {
@@ -705,8 +742,7 @@ const Checkout = () => {
               spacing={2}
               flexWrap="wrap"
               sx={{ justifyContent: 'center', mt: 2 }}
-            >
-            </Stack>
+            ></Stack>
           </Stack>
         </Grid>
 

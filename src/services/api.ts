@@ -941,12 +941,15 @@ export interface CheckoutCallbackUrls {
   expiredUrl: string;
 }
 
+export type CheckoutChargeType = 'DETACHED' | 'INSTALLMENT';
+export type CheckoutPaymentMethod = 'PIX' | 'CREDIT_CARD';
+
 export interface CreateCheckoutRequest {
   customer: string;
-  chargeTypes: string[];
+  chargeTypes: CheckoutChargeType[];
   minutesToExpire: number;
   callback: CheckoutCallbackUrls;
-  paymentMethods: string[];
+  paymentMethods: CheckoutPaymentMethod[];
   installment: {
     maxInstallmentCount: number;
   };
