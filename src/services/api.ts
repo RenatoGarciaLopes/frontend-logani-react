@@ -930,3 +930,56 @@ export const addOrderShipping = async (
     throw new Error(errorMessage);
   }
 };
+
+// -----------------------------
+// Criação de Checkout
+// -----------------------------
+
+export interface CheckoutCallbackUrls {
+  successUrl: string;
+  cancelUrl: string;
+  expiredUrl: string;
+}
+
+export interface CreateCheckoutRequest {
+  customer: string;
+  chargeTypes: string[];
+  minutesToExpire: number;
+  callback: CheckoutCallbackUrls;
+  paymentMethods: string[];
+  installment: {
+    maxInstallmentCount: number;
+  };
+  externalReference: string;
+}
+
+export interface CreateCheckoutResponse {
+  message: string;
+  data: {
+    local_id: string;
+    asaas_id: string;
+    checkout_url: string;
+    name: string;
+    value: number;
+    status: string;
+    expires_at: string;
+    payment_id: string;
+    asaas_response: unknown;
+  };
+}
+
+export const createCheckout = async (
+  payload: CreateCheckoutRequest
+): Promise<CreateCheckoutResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<CreateCheckoutResponse>('/checkouts/create/', payload);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao criar checkout. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
