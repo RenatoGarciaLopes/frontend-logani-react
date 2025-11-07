@@ -1,10 +1,12 @@
 import * as yup from 'yup';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFormik } from 'formik';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import CloseIcon from '@mui/icons-material/Close';
 import IconButton from '@mui/material/IconButton';
+import CloseIcon from '@mui/icons-material/Close';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import {
   Box,
   Link,
@@ -15,99 +17,185 @@ import {
   Backdrop,
   TextField,
   Typography,
+  InputAdornment,
   CircularProgress,
 } from '@mui/material';
 
-import { login, register, saveAuthData } from '../../services/api.ts';
+import { forgotPassword, login, register, resetPassword, saveAuthData } from '../../services/api.ts';
+
+export type LoginModalMode = 'login' | 'register' | 'forgotPassword' | 'resetPassword';
+
+type FormValues = {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+};
 
 interface LoginModalProps {
   open: boolean;
   onClose: () => void;
+  initialMode?: LoginModalMode;
+  resetToken?: string | null;
+  onModeChange?: (mode: LoginModalMode) => void;
 }
 
-const getValidationSchema = (mode: 'login' | 'register') => {
-  const baseSchema = {
-    email: yup.string().email('Email inválido').required('Email é obrigatório'),
-    password: yup
-      .string()
-      .min(6, 'Senha deve ter no mínimo 6 caracteres')
-      .required('Senha é obrigatória'),
-  };
+const getValidationSchema = (mode: LoginModalMode) => {
+  const emailSchema = yup.string().email('Email inválido').required('Email é obrigatório');
+  const passwordSchema = yup
+    .string()
+    .min(6, 'Senha deve ter no mínimo 6 caracteres')
+    .required('Senha é obrigatória');
 
-  if (mode === 'register') {
-    return yup.object({
-      name: yup.string().required('Nome é obrigatório'),
-      ...baseSchema,
-    });
+  switch (mode) {
+    case 'register':
+      return yup.object({
+        name: yup.string().required('Nome é obrigatório'),
+        email: emailSchema,
+        password: passwordSchema,
+      });
+    case 'forgotPassword':
+      return yup.object({
+        email: emailSchema,
+      });
+    case 'resetPassword':
+      return yup.object({
+        password: passwordSchema,
+        confirmPassword: yup
+          .string()
+          .oneOf([yup.ref('password')], 'As senhas devem ser iguais')
+          .required('Confirmação de senha é obrigatória'),
+      });
+    case 'login':
+    default:
+      return yup.object({
+        email: emailSchema,
+        password: passwordSchema,
+      });
   }
-
-  return yup.object(baseSchema);
 };
 
-const LoginModal = ({ open, onClose }: LoginModalProps) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+const LoginModal = ({
+  open,
+  onClose,
+  initialMode = 'login',
+  resetToken = null,
+  onModeChange,
+}: LoginModalProps) => {
+  const [mode, setMode] = useState<LoginModalMode>(initialMode);
+  const [currentResetToken, setCurrentResetToken] = useState<string | null>(resetToken);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const formik = useFormik({
+  const handleModeUpdate = (nextMode: LoginModalMode) => {
+    if (mode === nextMode) {
+      return;
+    }
+    setMode(nextMode);
+    onModeChange?.(nextMode);
+  };
+
+  useEffect(() => {
+    handleModeUpdate(initialMode);
+  }, [initialMode]);
+
+  useEffect(() => {
+    setCurrentResetToken(resetToken);
+  }, [resetToken]);
+
+  const validationSchema = useMemo(() => getValidationSchema(mode), [mode]);
+
+  const formik = useFormik<FormValues>({
     initialValues: {
       name: '',
       email: '',
       password: '',
+      confirmPassword: '',
     },
-    validationSchema: getValidationSchema(mode),
+    validationSchema,
     onSubmit: async (values) => {
       setIsLoading(true);
       setError(null);
+      setSuccessMessage(null);
 
       try {
-        if (mode === 'register') {
-          const response = await register({
-            name: values.name,
-            email: values.email,
-            password: values.password,
-          });
+        switch (mode) {
+          case 'register': {
+            const response = await register({
+              name: values.name,
+              email: values.email,
+              password: values.password,
+            });
 
-          console.log('Cadastro realizado com sucesso:', response);
+            console.log('Cadastro realizado com sucesso:', response);
 
-          // Salva os dados de autenticação no localStorage
-          if (response.data) {
-            saveAuthData(response.data);
+            if (response.data) {
+              saveAuthData(response.data);
+            }
+
+            setSuccessMessage('Cadastro realizado com sucesso!');
+
+            setTimeout(() => {
+              onClose();
+              formik.resetForm();
+              setSuccessMessage(null);
+              handleModeUpdate('login');
+            }, 2000);
+            break;
           }
+          case 'forgotPassword': {
+            await forgotPassword({
+              email: values.email,
+            });
 
-          // Mostra mensagem de sucesso
-          setSuccessMessage('Cadastro realizado com sucesso!');
-
-          // Fecha o modal após um delay para o usuário ver a mensagem
-          setTimeout(() => {
-            onClose();
+            setSuccessMessage('Clique no link no seu email');
             formik.resetForm();
-            setSuccessMessage(null);
-            setMode('login'); // Volta para o modo de login após cadastro
-          }, 2000);
-        } else {
-          const response = await login({
-            email: values.email,
-            password: values.password,
-          });
-
-          console.log('Login realizado com sucesso:', response);
-
-          // Salva os dados de autenticação no localStorage
-          if (response.data) {
-            saveAuthData(response.data);
+            break;
           }
+          case 'resetPassword': {
+            if (!currentResetToken) {
+              throw new Error(tokenMessage);
+            }
 
-          // Mostra mensagem de sucesso
-          setSuccessMessage('Login realizado com sucesso!');
+            await resetPassword({
+              token: currentResetToken,
+              password: values.password,
+            });
 
-          // Fecha o modal após um delay para o usuário ver a mensagem
-          setTimeout(() => {
-            onClose();
-            formik.resetForm();
-            setSuccessMessage(null);
-          }, 2000);
+            setSuccessMessage('Senha redefinida com sucesso!');
+            setTimeout(() => {
+              formik.resetForm();
+              setSuccessMessage(null);
+              setCurrentResetToken(null);
+              handleModeUpdate('login');
+              onClose();
+            }, 2000);
+            break;
+          }
+          case 'login':
+          default: {
+            const response = await login({
+              email: values.email,
+              password: values.password,
+            });
+
+            console.log('Login realizado com sucesso:', response);
+
+            if (response.data) {
+              saveAuthData(response.data);
+            }
+
+            setSuccessMessage('Login realizado com sucesso!');
+
+            setTimeout(() => {
+              onClose();
+              formik.resetForm();
+              setSuccessMessage(null);
+            }, 2000);
+            break;
+          }
         }
       } catch (err) {
         setError(
@@ -115,7 +203,11 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
             ? err.message
             : mode === 'register'
               ? 'Erro ao fazer cadastro. Tente novamente.'
-              : 'Erro ao fazer login. Tente novamente.'
+              : mode === 'forgotPassword'
+                ? 'Erro ao solicitar redefinição de senha. Tente novamente.'
+                : mode === 'resetPassword'
+                  ? 'Erro ao redefinir senha. Tente novamente.'
+                  : 'Erro ao fazer login. Tente novamente.'
         );
       } finally {
         setIsLoading(false);
@@ -124,10 +216,91 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
     enableReinitialize: true,
   });
 
-  const handleModeSwitch = () => {
-    setMode(mode === 'login' ? 'register' : 'login');
+  const resetFormState = () => {
     formik.resetForm();
+    setError(null);
+    setSuccessMessage(null);
+    setShowPassword(false);
   };
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    resetFormState();
+  }, [mode, open]);
+
+  const handleModeSwitch = () => {
+    const nextMode = mode === 'login' ? 'register' : 'login';
+    resetFormState();
+    handleModeUpdate(nextMode);
+  };
+
+  const handleForgotPasswordClick = () => {
+    resetFormState();
+    handleModeUpdate('forgotPassword');
+  };
+
+  const handleBackToLogin = () => {
+    resetFormState();
+    handleModeUpdate('login');
+    setCurrentResetToken(null);
+  };
+
+  const handleClickShowPassword = () => {
+    setShowPassword(!showPassword);
+  };
+
+  const tokenMessage = 'Token inválido ou expirado. Solicite uma nova redefinição.';
+
+  useEffect(() => {
+    if (mode !== 'resetPassword') {
+      return;
+    }
+
+    if (!currentResetToken) {
+      setError((prev) => (prev === tokenMessage ? prev : tokenMessage));
+    } else if (error === tokenMessage) {
+      setError(null);
+    }
+  }, [mode, currentResetToken, error]);
+
+  const passwordLabel = mode === 'resetPassword' ? 'Nova senha' : 'Senha';
+  const submitLabel = (() => {
+    switch (mode) {
+      case 'register':
+        return 'Cadastrar';
+      case 'forgotPassword':
+        return 'Enviar';
+      case 'resetPassword':
+        return 'Redefinir senha';
+      case 'login':
+      default:
+        return 'Entrar';
+    }
+  })();
+
+  const titleLabel = (() => {
+    switch (mode) {
+      case 'register':
+        return 'Cadastrar';
+      case 'forgotPassword':
+        return 'Recuperar senha';
+      case 'resetPassword':
+        return 'Redefinir senha';
+      case 'login':
+      default:
+        return 'Entrar';
+    }
+  })();
+
+  const isEmailFieldVisible = mode !== 'resetPassword';
+  const isPasswordFieldVisible = mode === 'login' || mode === 'register' || mode === 'resetPassword';
+  const showForgotPasswordLink = mode === 'login' && !successMessage;
+  const isSubmitDisabled =
+    isLoading || !!successMessage || (mode === 'resetPassword' && !currentResetToken);
+  const areFieldsDisabled =
+    !!successMessage || (mode === 'resetPassword' && !currentResetToken);
 
   return (
     <Modal
@@ -208,7 +381,7 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
                   letterSpacing: '0.05em',
                 }}
               >
-                {mode === 'login' ? 'Entrar' : 'Cadastrar'}
+                {titleLabel}
               </Typography>
             </motion.div>
           </AnimatePresence>
@@ -234,6 +407,13 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
                       {successMessage}
                     </Alert>
                   )}
+                  {(mode === 'forgotPassword' || mode === 'resetPassword') && (
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                      {mode === 'forgotPassword'
+                        ? 'Informe o e-mail cadastrado para receber o link de redefinição de senha.'
+                        : 'Defina uma nova senha para acessar sua conta.'}
+                    </Typography>
+                  )}
                   <AnimatePresence>
                     {mode === 'register' && (
                       <motion.div
@@ -254,42 +434,109 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
                           onBlur={formik.handleBlur}
                           error={formik.touched.name && Boolean(formik.errors.name)}
                           helperText={formik.touched.name && formik.errors.name}
-                          disabled={!!successMessage}
+                          disabled={areFieldsDisabled}
                         />
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  <TextField
-                    fullWidth
-                    id="email"
-                    name="email"
-                    label="Email"
-                    type="email"
-                    value={formik.values.email}
-                    onChange={formik.handleChange}
-                    onBlur={formik.handleBlur}
-                    error={formik.touched.email && Boolean(formik.errors.email)}
-                    helperText={formik.touched.email && formik.errors.email}
-                    disabled={!!successMessage}
-                  />
-                  <TextField
-                    fullWidth
-                    id="password"
-                    name="password"
-                    label="Senha"
-                    type="password"
-                    value={formik.values.password}
-                    onChange={formik.handleChange}
-                    onBlur={formik.handleBlur}
-                    error={formik.touched.password && Boolean(formik.errors.password)}
-                    helperText={formik.touched.password && formik.errors.password}
-                    disabled={!!successMessage}
-                  />
+                  {isEmailFieldVisible && (
+                    <TextField
+                      fullWidth
+                      id="email"
+                      name="email"
+                      label="Email"
+                      type="email"
+                      value={formik.values.email}
+                      onChange={formik.handleChange}
+                      onBlur={formik.handleBlur}
+                      error={formik.touched.email && Boolean(formik.errors.email)}
+                      helperText={formik.touched.email && formik.errors.email}
+                      disabled={areFieldsDisabled}
+                    />
+                  )}
+                  {isPasswordFieldVisible && (
+                    <TextField
+                      fullWidth
+                      id="password"
+                      name="password"
+                      label={passwordLabel}
+                      type={showPassword ? 'text' : 'password'}
+                      value={formik.values.password}
+                      onChange={formik.handleChange}
+                      onBlur={formik.handleBlur}
+                      error={formik.touched.password && Boolean(formik.errors.password)}
+                      helperText={formik.touched.password && formik.errors.password}
+                      disabled={areFieldsDisabled}
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton
+                              aria-label="toggle password visibility"
+                              onClick={handleClickShowPassword}
+                              edge="end"
+                              disabled={areFieldsDisabled}
+                            >
+                              {showPassword ? <VisibilityOff /> : <Visibility />}
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                  )}
+                  {mode === 'resetPassword' && (
+                    <TextField
+                      fullWidth
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      label="Confirme a nova senha"
+                      type={showPassword ? 'text' : 'password'}
+                      value={formik.values.confirmPassword}
+                      onChange={formik.handleChange}
+                      onBlur={formik.handleBlur}
+                      error={formik.touched.confirmPassword && Boolean(formik.errors.confirmPassword)}
+                      helperText={formik.touched.confirmPassword && formik.errors.confirmPassword}
+                      disabled={areFieldsDisabled}
+                      InputProps={{
+                        endAdornment: (
+                          <InputAdornment position="end">
+                            <IconButton
+                              aria-label="toggle password visibility"
+                              onClick={handleClickShowPassword}
+                              edge="end"
+                              disabled={areFieldsDisabled}
+                            >
+                              {showPassword ? <VisibilityOff /> : <Visibility />}
+                            </IconButton>
+                          </InputAdornment>
+                        ),
+                      }}
+                    />
+                  )}
+                  {showForgotPasswordLink && (
+                    <Box sx={{ textAlign: 'right' }}>
+                      <Link
+                        component="button"
+                        type="button"
+                        onClick={handleForgotPasswordClick}
+                        sx={{
+                          color: 'text.primary',
+                          textDecoration: 'none',
+                          fontSize: '0.85rem',
+                          fontWeight: 500,
+                          '&:hover': {
+                            textDecoration: 'underline',
+                          },
+                        }}
+                      >
+                        Esqueci minha senha
+                      </Link>
+                    </Box>
+                  )}
                   <Button
                     type="submit"
                     variant="contained"
                     fullWidth
-                    disabled={isLoading}
+                    disabled={isSubmitDisabled}
                     sx={{
                       mt: 2,
                       bgcolor: 'text.primary',
@@ -302,33 +549,75 @@ const LoginModal = ({ open, onClose }: LoginModalProps) => {
                       },
                     }}
                   >
-                    {isLoading ? (
-                      <CircularProgress size={24} color="inherit" />
-                    ) : mode === 'login' ? (
-                      'Entrar'
-                    ) : (
-                      'Cadastrar'
-                    )}
+                    {isLoading ? <CircularProgress size={24} color="inherit" /> : submitLabel}
                   </Button>
                   <Box sx={{ textAlign: 'center', mt: 2 }}>
-                    <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
-                      {mode === 'login' ? 'Não tem uma conta?' : 'Já tem uma conta?'}
-                    </Typography>
-                    <Link
-                      component="button"
-                      type="button"
-                      onClick={handleModeSwitch}
-                      sx={{
-                        color: 'text.primary',
-                        textDecoration: 'none',
-                        fontWeight: 500,
-                        '&:hover': {
-                          textDecoration: 'underline',
-                        },
-                      }}
-                    >
-                      {mode === 'login' ? 'Cadastre-se' : 'Fazer login'}
-                    </Link>
+                    {mode === 'login' && (
+                      <>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+                          Não tem uma conta?
+                        </Typography>
+                        <Link
+                          component="button"
+                          type="button"
+                          onClick={handleModeSwitch}
+                          sx={{
+                            color: 'text.primary',
+                            textDecoration: 'none',
+                            fontWeight: 500,
+                            '&:hover': {
+                              textDecoration: 'underline',
+                            },
+                          }}
+                        >
+                          Cadastre-se
+                        </Link>
+                      </>
+                    )}
+                    {mode === 'register' && (
+                      <>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+                          Já tem uma conta?
+                        </Typography>
+                        <Link
+                          component="button"
+                          type="button"
+                          onClick={handleModeSwitch}
+                          sx={{
+                            color: 'text.primary',
+                            textDecoration: 'none',
+                            fontWeight: 500,
+                            '&:hover': {
+                              textDecoration: 'underline',
+                            },
+                          }}
+                        >
+                          Fazer login
+                        </Link>
+                      </>
+                    )}
+                    {(mode === 'forgotPassword' || mode === 'resetPassword') && (
+                      <>
+                        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+                          {mode === 'forgotPassword' ? 'Lembrou da senha?' : 'Deseja acessar sua conta?'}
+                        </Typography>
+                        <Link
+                          component="button"
+                          type="button"
+                          onClick={handleBackToLogin}
+                          sx={{
+                            color: 'text.primary',
+                            textDecoration: 'none',
+                            fontWeight: 500,
+                            '&:hover': {
+                              textDecoration: 'underline',
+                            },
+                          }}
+                        >
+                          Fazer login
+                        </Link>
+                      </>
+                    )}
                   </Box>
                 </Stack>
               </form>

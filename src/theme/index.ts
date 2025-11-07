@@ -80,6 +80,14 @@ const theme = createTheme({
         body: {
           backgroundColor: '#FCFCF8',
           color: '#423C3C',
+          overflowX: 'hidden',
+          width: '100%',
+          maxWidth: '100vw',
+        },
+        html: {
+          overflowX: 'hidden',
+          width: '100%',
+          maxWidth: '100vw',
         },
         a: {
           color: 'inherit',

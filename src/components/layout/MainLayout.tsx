@@ -19,9 +19,15 @@ const MainLayout = () => {
   }, [location.pathname]);
 
   return (
-    <Box display="flex" minHeight="100vh" flexDirection="column" bgcolor="background.default">
+    <Box
+      display="flex"
+      minHeight="100vh"
+      flexDirection="column"
+      bgcolor="background.default"
+      sx={{ overflowX: 'hidden', width: '100%', maxWidth: '100vw' }}
+    >
       <Header />
-      <Box component="main" flexGrow={1}>
+      <Box component="main" flexGrow={1} sx={{ overflowX: 'hidden', width: '100%' }}>
         <Outlet />
       </Box>
       <Footer />

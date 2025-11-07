@@ -21,12 +21,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 
-import {
-  getAuthData,
-  createClient,
-  saveClientData,
-  type CreateClientRequest,
-} from '../../services/api.ts';
+import { createClient, saveClientData, type CreateClientRequest } from '../../services/api.ts';
 
 interface ClientRegistrationModalProps {
   open: boolean;
@@ -68,7 +63,7 @@ const validateCPF = (cpf: string): boolean => {
 };
 
 const validationSchema = yup.object({
-  name: yup.string().required('Nome é obrigatório'),
+  name: yup.string(),
   cpf: yup
     .string()
     .required('CPF é obrigatório')
@@ -143,9 +138,11 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
       setError(null);
 
       try {
-        // Remove máscaras antes de enviar
+        // Remove máscaras antes de enviar e remove o campo name
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { name, ...valuesWithoutName } = values;
         const cleanValues: CreateClientRequest = {
-          ...values,
+          ...valuesWithoutName,
           cpf: values.cpf.replace(/\D/g, ''),
           mobile_phone: values.mobile_phone.replace(/\D/g, ''),
         };
@@ -164,17 +161,11 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
     },
   });
 
-  // Preenche o nome automaticamente quando o modal abrir
+  // Reset do estado de CEP validado quando o modal abrir
   useEffect(() => {
     if (open) {
-      const { user } = getAuthData();
-      if (user?.name) {
-        formik.setFieldValue('name', user.name);
-      }
-      // Reset do estado de CEP validado quando o modal abrir
       setCepValidated(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // Reset do estado de CEP validado quando o CEP for alterado
@@ -199,11 +190,10 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
     if (activeStep === 0) {
       // Validar dados pessoais
       formik.setTouched({
-        name: true,
         cpf: true,
         mobile_phone: true,
       });
-      if (!formik.errors.name && !formik.errors.cpf && !formik.errors.mobile_phone) {
+      if (!formik.errors.cpf && !formik.errors.mobile_phone) {
         setActiveStep(1);
       }
     } else if (activeStep === 1) {
@@ -341,17 +331,6 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
       case 0:
         return (
           <Stack spacing={3}>
-            <TextField
-              fullWidth
-              id="name"
-              name="name"
-              label="Nome Completo"
-              value={formik.values.name}
-              onChange={formik.handleChange}
-              onBlur={formik.handleBlur}
-              error={formik.touched.name && Boolean(formik.errors.name)}
-              helperText={formik.touched.name && formik.errors.name}
-            />
             <TextField
               fullWidth
               id="cpf"
@@ -514,7 +493,6 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
               <Typography variant="body1" sx={{ fontWeight: 600, mb: 1 }}>
                 Dados Pessoais:
               </Typography>
-              <Typography variant="body2">Nome: {formik.values.name}</Typography>
               <Typography variant="body2">CPF: {displayCPF(formik.values.cpf)}</Typography>
               <Typography variant="body2">
                 Telefone: {displayPhone(formik.values.mobile_phone)}

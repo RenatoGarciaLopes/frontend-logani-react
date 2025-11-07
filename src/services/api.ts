@@ -341,6 +341,23 @@ export const logout = async (): Promise<void> => {
   }
 };
 
+interface ForgotPasswordRequest {
+  email: string;
+}
+
+interface ForgotPasswordResponse {
+  message: string;
+}
+
+interface ResetPasswordRequest {
+  token: string;
+  password: string;
+}
+
+interface ResetPasswordResponse {
+  message: string;
+}
+
 export const login = async (credentials: LoginRequest): Promise<LoginResponse> => {
   if (!API_URL) {
     throw new Error('URL da API não configurada');
@@ -369,6 +386,38 @@ export const register = async (credentials: RegisterRequest): Promise<RegisterRe
   }
 };
 
+export const forgotPassword = async (
+  payload: ForgotPasswordRequest
+): Promise<ForgotPasswordResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<ForgotPasswordResponse>('/users/forgot-password/', payload);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao solicitar redefinição de senha.');
+    throw new Error(errorMessage);
+  }
+};
+
+export const resetPassword = async (
+  payload: ResetPasswordRequest
+): Promise<ResetPasswordResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<ResetPasswordResponse>('/users/reset-password/', payload);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao redefinir senha. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
 // Interfaces para Cliente
 export interface ClientAddress {
   postal_code: string;
@@ -381,7 +430,7 @@ export interface ClientAddress {
 }
 
 export interface CreateClientRequest {
-  name: string;
+  name?: string;
   cpf: string;
   mobile_phone: string;
   address: ClientAddress;
@@ -705,11 +754,11 @@ export const handleOrderAfterClientSave = async (
   quantity: number = 1
 ): Promise<void> => {
   try {
-    // Verifica se já existe pedidos
-    const myOrders = await getMyOrders();
+    // Verifica se já existe pedidos PENDING
+    const myOrders = await getMyOrders('PENDING');
 
-    // Se não houver pedidos, cria um novo
-    if (myOrders.data.count === 0) {
+    // Se não houver pedidos PENDING, cria um novo
+    if (myOrders.data.count === 0 || myOrders.data.orders.length === 0) {
       const createResponse = await createOrder({
         items: [{ product_id: productId, quantity }],
       });
@@ -718,9 +767,166 @@ export const handleOrderAfterClientSave = async (
 
       // Salva no localStorage
       saveOrderData(order_id, external_reference);
+    } else {
+      // Se já existe pedido PENDING, verifica se o produto já está no pedido
+      const currentOrder = myOrders.data.orders[0];
+      const existingItem = currentOrder.items.find((item) => item.product_id === productId);
+
+      if (!existingItem) {
+        // Produto não está no pedido, adiciona com action: "add"
+        await updateOrder(currentOrder.order_id, {
+          items: [
+            {
+              action: 'add',
+              product_id: productId,
+              quantity,
+            },
+          ],
+        });
+      } else {
+        // Produto já está no pedido, atualiza somando as quantidades
+        const newQuantity = existingItem.quantity + quantity;
+        await updateOrder(currentOrder.order_id, {
+          items: [
+            {
+              action: 'update',
+              product_id: productId,
+              quantity: newQuantity,
+            },
+          ],
+        });
+      }
     }
   } catch (error) {
     console.error('Erro ao gerenciar pedido:', error);
     // Não lança erro para não quebrar o fluxo principal
+  }
+};
+
+// Interfaces para Cálculo de Frete
+export interface CalculateShippingRequest {
+  to_postal_code: string;
+  order_id: string;
+}
+
+export interface ShippingCompany {
+  id: number;
+  name: string;
+  picture: string;
+}
+
+export interface ShippingOption {
+  id: number;
+  name: string;
+  price: string;
+  custom_price: string;
+  currency: string;
+  delivery_time: number;
+  custom_delivery_time: number;
+  company: ShippingCompany;
+  final_price: number;
+  final_delivery_time: number;
+}
+
+export interface CalculateShippingResponse {
+  quotes: ShippingOption[];
+  count: number;
+  products_source: string;
+}
+
+// Função para calcular frete
+export const calculateShipping = async (
+  request: CalculateShippingRequest
+): Promise<CalculateShippingResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<CalculateShippingResponse>('/shippings/calculate/', request);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao calcular frete. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
+// -----------------------------
+// Atualização de Cliente
+// -----------------------------
+export interface UpdateClientRequest {
+  name?: string;
+  mobile_phone?: string;
+  address?: ClientAddress;
+}
+
+export interface UpdateClientResponse {
+  message: string;
+  data: unknown;
+}
+
+export const updateClient = async (payload: UpdateClientRequest): Promise<UpdateClientResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.patch<UpdateClientResponse>('/clients/update/', payload);
+    // Se endereço foi enviado, atualiza o localStorage para manter consistência
+    if (payload.address) {
+      try {
+        saveClientAddressLocal(payload.address);
+      } catch {
+        // Evita quebrar o fluxo por falha no localStorage
+      }
+    }
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao atualizar dados do cliente.');
+    throw new Error(errorMessage);
+  }
+};
+
+// Utilitário: atualizar somente o endereço no localStorage
+export const saveClientAddressLocal = (address: ClientAddress): void => {
+  localStorage.setItem(STORAGE_KEYS.CLIENT_ADDRESS, JSON.stringify(address));
+};
+
+// -----------------------------
+// Adicionar frete ao pedido
+// -----------------------------
+export interface AddShippingRequest {
+  service_id: number;
+  service_name: string;
+  price: number | string;
+  custom_price: number | string;
+  delivery_time: number;
+  custom_delivery_time: number;
+  currency: string;
+  company: ShippingCompany;
+}
+
+export interface AddShippingResponse {
+  message: string;
+  data: unknown;
+}
+
+export const addOrderShipping = async (
+  orderId: string,
+  payload: AddShippingRequest
+): Promise<AddShippingResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<AddShippingResponse>(
+      `/orders/add-shipping/${orderId}/`,
+      payload
+    );
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao adicionar frete ao pedido.');
+    throw new Error(errorMessage);
   }
 };

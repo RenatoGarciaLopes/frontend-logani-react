@@ -1,22 +1,34 @@
+import { useNavigate } from 'react-router-dom';
 import { useMemo, useState, useEffect } from 'react';
 
 import AddIcon from '@mui/icons-material/Add';
 import CloseIcon from '@mui/icons-material/Close';
 import RemoveIcon from '@mui/icons-material/Remove';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import {
   Box,
   Stack,
-  Drawer,
   Button,
+  Drawer,
   Divider,
+  Collapse,
   IconButton,
   Typography,
   CircularProgress,
 } from '@mui/material';
 
 import { products } from '../../data/products.ts';
-import { type Order, getMyOrders, updateOrder, type OrderItemInOrder } from '../../services/api.ts';
+import {
+  type Order,
+  getMyOrders,
+  updateOrder,
+  getClientData,
+  calculateShipping,
+  type ShippingOption,
+  type OrderItemInOrder,
+} from '../../services/api.ts';
 
 interface CartDrawerProps {
   open: boolean;
@@ -29,6 +41,7 @@ interface PendingChanges {
 }
 
 const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -37,6 +50,19 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
     quantityUpdates: new Map(),
     itemsToRemove: new Set(),
   });
+  const [shippingOptions, setShippingOptions] = useState<ShippingOption[]>([]);
+  const [selectedShipping, setSelectedShipping] = useState<ShippingOption | null>(null);
+  const [isCalculatingShipping, setIsCalculatingShipping] = useState(false);
+  const [shippingError, setShippingError] = useState<string | null>(null);
+  const [isShippingExpanded, setIsShippingExpanded] = useState(false);
+
+  // Função para resetar o estado do frete
+  const resetShippingState = () => {
+    setShippingOptions([]);
+    setSelectedShipping(null);
+    setShippingError(null);
+    setIsShippingExpanded(false);
+  };
 
   useEffect(() => {
     if (open) {
@@ -46,6 +72,11 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
         quantityUpdates: new Map(),
         itemsToRemove: new Set(),
       });
+      // Reseta estados de frete ao abrir o carrinho
+      resetShippingState();
+    } else {
+      // Reseta estados de frete ao fechar o carrinho
+      resetShippingState();
     }
   }, [open]);
 
@@ -86,6 +117,13 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
 
   // Calcula o total baseado nos itens com mudanças aplicadas
   const calculatedTotal = useMemo(() => {
+    const subtotal = cartItems.reduce((sum, item) => sum + item.total_price, 0);
+    const shippingCost = selectedShipping ? selectedShipping.final_price : 0;
+    return subtotal + shippingCost;
+  }, [cartItems, selectedShipping]);
+
+  // Calcula o subtotal sem frete
+  const subtotal = useMemo(() => {
     return cartItems.reduce((sum, item) => sum + item.total_price, 0);
   }, [cartItems]);
 
@@ -129,6 +167,8 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
         };
       }
     });
+    // Reseta o estado do frete quando houver mudanças
+    resetShippingState();
   };
 
   // Função para remover um item (apenas localmente)
@@ -145,6 +185,8 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
         itemsToRemove: newRemoves,
       };
     });
+    // Reseta o estado do frete quando houver mudanças
+    resetShippingState();
   };
 
   // Função para aplicar todas as mudanças pendentes
@@ -213,13 +255,92 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
     onClose();
   };
 
+  // Handler para calcular frete
+  const handleCalculateShipping = async () => {
+    if (!currentOrder) {
+      setShippingError('Pedido não encontrado');
+      return;
+    }
+
+    // Verifica se há mudanças pendentes e aplica antes de calcular o frete
+    const hasChanges =
+      pendingChanges.quantityUpdates.size > 0 || pendingChanges.itemsToRemove.size > 0;
+
+    if (hasChanges) {
+      try {
+        // Aplica as mudanças pendentes primeiro
+        await applyPendingChanges();
+        // Recarrega os pedidos para ter o pedido atualizado
+        await fetchPendingOrders();
+      } catch (err) {
+        setShippingError('Erro ao atualizar pedido. Tente novamente.');
+        console.error('Erro ao aplicar mudanças antes de calcular frete:', err);
+        return;
+      }
+    }
+
+    // Obtém o CEP do endereço do cliente
+    const clientData = getClientData();
+    if (!clientData.address || !clientData.address.postal_code) {
+      setShippingError('Por favor, cadastre seu endereço antes de calcular o frete');
+      return;
+    }
+
+    // Remove caracteres não numéricos do CEP
+    const cleanPostalCode = clientData.address.postal_code.replace(/\D/g, '');
+
+    if (cleanPostalCode.length !== 8) {
+      setShippingError('CEP inválido no seu cadastro. Por favor, atualize seu endereço');
+      return;
+    }
+
+    setIsCalculatingShipping(true);
+    setShippingError(null);
+    setShippingOptions([]);
+    setSelectedShipping(null);
+
+    try {
+      // Usa o order_id atualizado após aplicar as mudanças
+      const updatedOrder = orders[0] || currentOrder;
+      const response = await calculateShipping({
+        to_postal_code: cleanPostalCode,
+        order_id: updatedOrder.order_id,
+      });
+
+      if (response.quotes && response.quotes.length > 0) {
+        setShippingOptions(response.quotes);
+        // Seleciona automaticamente a opção mais barata
+        const cheapestOption = response.quotes.reduce((prev, current) =>
+          prev.final_price < current.final_price ? prev : current
+        );
+        setSelectedShipping(cheapestOption);
+        setIsShippingExpanded(true);
+      } else {
+        setShippingError('Nenhuma opção de frete disponível para este CEP');
+      }
+    } catch (err) {
+      setShippingError(err instanceof Error ? err.message : 'Erro ao calcular frete');
+      console.error('Erro ao calcular frete:', err);
+    } finally {
+      setIsCalculatingShipping(false);
+    }
+  };
+
+  // Formata o prazo de entrega (dias úteis)
+  const formatDeliveryTime = (days: number): string => {
+    if (days === 1) {
+      return '1 dia útil';
+    }
+    return `${days} dias úteis`;
+  };
+
   // Handler para finalizar a compra (aplica mudanças antes de finalizar)
   const handleFinalizePurchase = async () => {
     try {
       await applyPendingChanges();
-      // Aqui você pode adicionar a lógica de finalização da compra
-      // Por enquanto, apenas fecha o carrinho
+      // Fecha o carrinho e navega para o checkout
       onClose();
+      navigate('/checkout');
     } catch {
       // Erro já é exibido no estado
     }
@@ -355,7 +476,7 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
             </Typography>
             <Button
               variant="contained"
-              onClick={onClose}
+              onClick={handleClose}
               fullWidth
               sx={{
                 bgcolor: 'text.primary',
@@ -454,7 +575,15 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                     </Typography>
 
                     {/* Controles de quantidade */}
-                    <Stack direction="row" alignItems="center" spacing={1}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1}
+                      sx={{
+                        flexWrap: 'nowrap',
+                        width: '100%',
+                      }}
+                    >
                       <Box
                         sx={{
                           display: 'flex',
@@ -464,6 +593,9 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                           borderRadius: '20px',
                           overflow: 'hidden',
                           bgcolor: 'background.paper',
+                          flexShrink: 0,
+                          width: 'auto',
+                          minWidth: 'fit-content',
                         }}
                       >
                         <IconButton
@@ -474,6 +606,7 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                             minWidth: 'auto',
                             width: 32,
                             height: 32,
+                            flexShrink: 0,
                             '&:hover': {
                               bgcolor: 'action.hover',
                             },
@@ -491,6 +624,7 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                             textAlign: 'center',
                             color: 'text.primary',
                             fontWeight: 500,
+                            flexShrink: 0,
                           }}
                         >
                           {item.quantity}
@@ -503,6 +637,7 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                             minWidth: 'auto',
                             width: 32,
                             height: 32,
+                            flexShrink: 0,
                             '&:hover': {
                               bgcolor: 'action.hover',
                             },
@@ -518,6 +653,7 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                         size="small"
                         sx={{
                           ml: 'auto',
+                          flexShrink: 0,
                           color: 'text.secondary',
                           '&:hover': {
                             color: 'error.main',
@@ -549,11 +685,190 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
         )}
       </Box>
 
-      {/* Footer com total e botão */}
+      {/* Footer com cálculo de frete, total e botão */}
       {!isLoading && !error && cartItems.length > 0 && currentOrder && (
         <>
           <Divider />
           <Box sx={{ p: 2 }}>
+            {/* Seção de Cálculo de Frete */}
+            <Box sx={{ mb: 3 }}>
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ mb: 1, cursor: 'pointer' }}
+                onClick={() => setIsShippingExpanded(!isShippingExpanded)}
+              >
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontWeight: 700,
+                    color: 'text.primary',
+                    fontSize: '1rem',
+                  }}
+                >
+                  CALCULE SEU FRETE
+                </Typography>
+                <IconButton size="small" sx={{ p: 0.5 }}>
+                  {isShippingExpanded ? (
+                    <ExpandLessIcon sx={{ fontSize: 20 }} />
+                  ) : (
+                    <ExpandMoreIcon sx={{ fontSize: 20 }} />
+                  )}
+                </IconButton>
+              </Stack>
+
+              <Collapse in={isShippingExpanded}>
+                <Stack spacing={2} sx={{ mt: 2 }}>
+                  {shippingError && (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        color: 'error.main',
+                        fontSize: '0.875rem',
+                      }}
+                    >
+                      {shippingError}
+                    </Typography>
+                  )}
+                  {shippingOptions.length === 0 && (
+                    <Button
+                      variant="contained"
+                      onClick={handleCalculateShipping}
+                      disabled={isCalculatingShipping}
+                      fullWidth
+                      sx={{
+                        bgcolor: 'text.primary',
+                        color: 'background.default',
+                        borderRadius: '8px',
+                        textTransform: 'none',
+                        py: 1.5,
+                        '&:hover': {
+                          bgcolor: 'text.primary',
+                          opacity: 0.9,
+                        },
+                        '&:disabled': {
+                          bgcolor: 'text.primary',
+                          opacity: 0.5,
+                        },
+                      }}
+                    >
+                      {isCalculatingShipping ? (
+                        <CircularProgress size={20} sx={{ color: 'background.default' }} />
+                      ) : (
+                        'CALCULAR FRETE'
+                      )}
+                    </Button>
+                  )}
+
+                  {/* Opções de Frete */}
+                  {shippingOptions.length > 0 && selectedShipping && (
+                    <Box>
+                      <Stack spacing={1}>
+                        {shippingOptions.map((option) => (
+                          <Box
+                            key={option.id}
+                            sx={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              py: 1,
+                            }}
+                          >
+                            <Box>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  color: 'text.primary',
+                                  fontSize: '0.875rem',
+                                }}
+                              >
+                                {option.company.name} - {option.name}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  color: 'text.secondary',
+                                  fontSize: '0.75rem',
+                                }}
+                              >
+                                {formatDeliveryTime(option.final_delivery_time)}
+                              </Typography>
+                            </Box>
+                            <Typography
+                              variant="body2"
+                              sx={{
+                                fontWeight: selectedShipping.id === option.id ? 600 : 400,
+                                color: 'text.primary',
+                                fontSize: '0.875rem',
+                              }}
+                            >
+                              {formatPrice(option.final_price)}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                </Stack>
+              </Collapse>
+            </Box>
+
+            {/* Subtotal */}
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              alignItems="center"
+              sx={{ mb: 1 }}
+            >
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 600,
+                  color: 'text.primary',
+                }}
+              >
+                SUBTOTAL
+              </Typography>
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 600,
+                  color: 'text.primary',
+                }}
+              >
+                {formatPrice(subtotal)}
+              </Typography>
+            </Stack>
+
+            {/* Frete selecionado */}
+            {selectedShipping && (
+              <Stack
+                direction="row"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ mb: 1 }}
+              >
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
+                  Frete ({selectedShipping.company.name})
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'text.secondary',
+                  }}
+                >
+                  {formatPrice(selectedShipping.final_price)}
+                </Typography>
+              </Stack>
+            )}
+
+            {/* Total */}
             <Stack
               direction="row"
               justifyContent="space-between"
@@ -576,20 +891,10 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                   color: 'text.primary',
                 }}
               >
-                {formatPrice(calculatedTotal)} BRL
+                {formatPrice(calculatedTotal)}
               </Typography>
             </Stack>
-            <Typography
-              variant="caption"
-              sx={{
-                color: 'text.secondary',
-                fontSize: '0.7rem',
-                display: 'block',
-                mb: 2,
-              }}
-            >
-              Impostos, descontos e envio calculados na finalização da compra.
-            </Typography>
+
             <Button
               variant="contained"
               fullWidth
@@ -603,13 +908,14 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
                 textTransform: 'none',
                 fontSize: '1rem',
                 fontWeight: 600,
+                mt: 2,
                 '&:hover': {
                   bgcolor: 'text.primary',
                   opacity: 0.9,
                 },
               }}
             >
-              {isUpdating ? 'Processando...' : 'Finalizar a compra'}
+              {isUpdating ? 'Processando...' : 'FINALIZAR A COMPRA'}
             </Button>
           </Box>
         </>
