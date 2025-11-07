@@ -1,7 +1,9 @@
 import { useState } from 'react';
+
 import LogoutIcon from '@mui/icons-material/Logout';
-import { Box, Popover, Stack, Button, Typography, Divider } from '@mui/material';
-import { getAuthData, logout, User } from '../../services/api.ts';
+import { Stack, Button, Popover, Divider, Typography } from '@mui/material';
+
+import { logout, getAuthData } from '../../services/api.ts';
 
 interface UserMenuProps {
   anchorEl: HTMLElement | null;
@@ -13,7 +15,7 @@ interface UserMenuProps {
 const UserMenu = ({ anchorEl, open, onClose, onLogout }: UserMenuProps) => {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const authData = getAuthData();
-  const user: User | null = authData.user;
+  const { user } = authData;
 
   const handleLogout = async () => {
     setIsLoggingOut(true);
