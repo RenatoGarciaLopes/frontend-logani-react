@@ -1,7 +1,7 @@
 import * as yup from 'yup';
 import { useFormik } from 'formik';
+import { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useMemo, useState, useEffect, useCallback } from 'react';
 
 import IconButton from '@mui/material/IconButton';
 import CloseIcon from '@mui/icons-material/Close';
@@ -98,20 +98,18 @@ const LoginModal = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleModeUpdate = useCallback(
-    (nextMode: LoginModalMode) => {
-      if (mode === nextMode) {
-        return;
-      }
-      setMode(nextMode);
-      onModeChange?.(nextMode);
-    },
-    [mode, onModeChange]
-  );
+  const handleModeUpdate = (nextMode: LoginModalMode) => {
+    if (mode === nextMode) {
+      return;
+    }
+    setMode(nextMode);
+    onModeChange?.(nextMode);
+  };
 
   useEffect(() => {
     handleModeUpdate(initialMode);
-  }, [initialMode, handleModeUpdate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMode]);
 
   useEffect(() => {
     setCurrentResetToken(resetToken);
@@ -228,19 +226,20 @@ const LoginModal = ({
     enableReinitialize: true,
   });
 
-  const resetFormState = useCallback(() => {
+  const resetFormState = () => {
     formik.resetForm();
     setError(null);
     setSuccessMessage(null);
     setShowPassword(false);
-  }, [formik]);
+  };
 
   useEffect(() => {
     if (!open) {
       return;
     }
     resetFormState();
-  }, [mode, open, resetFormState]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, open]);
 
   const handleModeSwitch = () => {
     const nextMode = mode === 'login' ? 'register' : 'login';

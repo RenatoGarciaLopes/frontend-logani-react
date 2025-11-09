@@ -25,6 +25,8 @@ import {
   getMyOrders,
   updateOrder,
   getClientData,
+  getClientByBearerToken,
+  saveClientData,
   calculateShipping,
   type ShippingOption,
   type OrderItemInOrder,
@@ -279,8 +281,24 @@ const CartDrawer = ({ open, onClose }: CartDrawerProps) => {
       }
     }
 
-    // Obtém o CEP do endereço do cliente
-    const clientData = getClientData();
+    // Obtém o CEP do endereço do cliente; se não houver no localStorage, busca na API
+    let clientData = getClientData();
+    if (!clientData.address || !clientData.address.postal_code) {
+      try {
+        const clientResponse = await getClientByBearerToken();
+        if ('error' in clientResponse) {
+          setShippingError('Por favor, cadastre seu endereço antes de calcular o frete');
+          return;
+        }
+        saveClientData(clientResponse);
+        clientData = getClientData();
+      } catch (err) {
+        console.error('Erro ao buscar dados do cliente:', err);
+        setShippingError('Não foi possível obter seu endereço. Tente novamente.');
+        return;
+      }
+    }
+
     if (!clientData.address || !clientData.address.postal_code) {
       setShippingError('Por favor, cadastre seu endereço antes de calcular o frete');
       return;

@@ -5,16 +5,44 @@ import { motion } from 'framer-motion';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
-import { Box, Grid, Paper, Stack, Button, Container, TextField, Typography } from '@mui/material';
+import { Grid, Alert, Paper, Stack, Button, Container, TextField, Typography } from '@mui/material';
+
+import { sendContactMessage, type ContactFormData } from '../services/contact.ts';
+
+const initialFormState: ContactFormData = { nome: '', email: '', mensagem: '' };
 
 const ContactPage = () => {
-  const [formState, setFormState] = useState({ nome: '', email: '', mensagem: '' });
-  const [feedback, setFeedback] = useState('');
+  const [formState, setFormState] = useState<ContactFormData>(initialFormState);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null
+  );
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setFeedback('Recebemos sua mensagem! Entraremos em contato em breve.');
-    setFormState({ nome: '', email: '', mensagem: '' });
+    setFeedback(null);
+    setIsSubmitting(true);
+
+    try {
+      await sendContactMessage(formState);
+      setFeedback({
+        type: 'success',
+        message: 'Recebemos sua mensagem! Entraremos em contato em breve.',
+      });
+      setFormState(initialFormState);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível enviar sua mensagem agora. Tente novamente.';
+
+      setFeedback({
+        type: 'error',
+        message: errorMessage,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -213,6 +241,7 @@ const ContactPage = () => {
                     setFormState((prev) => ({ ...prev, nome: event.target.value }))
                   }
                   required
+                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -228,6 +257,7 @@ const ContactPage = () => {
                     setFormState((prev) => ({ ...prev, email: event.target.value }))
                   }
                   required
+                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -244,6 +274,7 @@ const ContactPage = () => {
                     setFormState((prev) => ({ ...prev, mensagem: event.target.value }))
                   }
                   required
+                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -256,6 +287,7 @@ const ContactPage = () => {
                   variant="contained"
                   color="primary"
                   fullWidth
+                  disabled={isSubmitting}
                   sx={{
                     fontSize: { xs: '0.9rem', sm: '0.95rem', md: '1rem' },
                     py: { xs: 1.5, sm: 1.5, md: 1.5 },
@@ -263,18 +295,20 @@ const ContactPage = () => {
                     mt: { xs: 0.5, sm: 0 },
                   }}
                 >
-                  Enviar mensagem
+                  {isSubmitting ? 'Enviando...' : 'Enviar mensagem'}
                 </Button>
                 {feedback && (
-                  <Box>
-                    <Typography
-                      variant="body2"
-                      color="primary.main"
-                      sx={{ fontSize: { xs: '0.85rem', sm: '0.875rem' } }}
-                    >
-                      {feedback}
-                    </Typography>
-                  </Box>
+                  <Alert
+                    severity={feedback.type}
+                    sx={{
+                      fontSize: { xs: '0.85rem', sm: '0.9rem' },
+                      '& .MuiAlert-message': {
+                        width: '100%',
+                      },
+                    }}
+                  >
+                    {feedback.message}
+                  </Alert>
                 )}
               </Stack>
             </Paper>
