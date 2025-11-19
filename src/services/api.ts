@@ -2,13 +2,13 @@ import axios from 'axios';
 
 import { extractErrorMessage } from '../utils/errorHandler.ts';
 
-const API_URL = import.meta.env.VITE_API_URL;
+export const API_URL = import.meta.env.VITE_API_URL;
 
 if (!API_URL) {
   console.warn('VITE_API_URL não está configurada nas variáveis de ambiente');
 }
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
@@ -685,10 +685,16 @@ export interface UpdateOrderItem {
 }
 
 export interface UpdateOrderRequest {
-  items: UpdateOrderItem[];
+  items?: UpdateOrderItem[];
+  couponCode?: string;
 }
 
 export interface UpdateOrderResponse {
+  message: string;
+  data: unknown;
+}
+
+export interface CancelOrderResponse {
   message: string;
   data: unknown;
 }
@@ -738,6 +744,20 @@ export const updateOrder = async (
     return response.data;
   } catch (error) {
     const errorMessage = extractErrorMessage(error, 'Erro ao atualizar pedido. Tente novamente.');
+    throw new Error(errorMessage);
+  }
+};
+
+export const cancelOrder = async (orderId: string): Promise<CancelOrderResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
+
+  try {
+    const response = await api.post<CancelOrderResponse>(`/orders/cancel/${orderId}/`);
+    return response.data;
+  } catch (error) {
+    const errorMessage = extractErrorMessage(error, 'Erro ao cancelar pedido. Tente novamente.');
     throw new Error(errorMessage);
   }
 };

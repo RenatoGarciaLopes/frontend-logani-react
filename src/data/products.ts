@@ -26,7 +26,7 @@ export const products: Product[] = [
     id: 'n5-energia',
     code: 'N.5',
     name: 'Energia',
-    price: 169.9,
+    price: 5,
     description:
       'Uma vela vibrante que combina notas de café tostado, caramelo e âmbar para despertar os sentidos e revigorar ambientes.',
     fullDescription:

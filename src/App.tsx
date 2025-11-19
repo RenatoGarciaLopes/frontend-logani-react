@@ -6,6 +6,7 @@ import ContactPage from './pages/Contact.tsx';
 import ProductsPage from './pages/Products.tsx';
 import CheckoutPage from './pages/Checkout.tsx';
 import ProductDetailPage from './pages/ProductDetail.tsx';
+import SucessoPage from './pages/Sucesso.tsx';
 import MainLayout from './components/layout/MainLayout.tsx';
 
 const App = () => {
@@ -18,6 +19,7 @@ const App = () => {
         <Route path="/sobre" element={<AboutPage />} />
         <Route path="/contato" element={<ContactPage />} />
         <Route path="/checkout" element={<CheckoutPage />} />
+        <Route path="/sucesso" element={<SucessoPage />} />
         <Route path="/reset-password" element={<HomePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

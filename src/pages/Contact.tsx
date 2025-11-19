@@ -1,49 +1,63 @@
-import { useState } from 'react';
-import type { FormEvent } from 'react';
 import { motion } from 'framer-motion';
+import type { FormEvent } from 'react';
+import { useState, useCallback } from 'react';
 
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
-import { Grid, Alert, Paper, Stack, Button, Container, TextField, Typography } from '@mui/material';
+import {
+  Box,
+  Grid,
+  Alert,
+  Paper,
+  Stack,
+  Button,
+  Container,
+  TextField,
+  Typography,
+} from '@mui/material';
 
-import { sendContactMessage, type ContactFormData } from '../services/contact.ts';
-
-const initialFormState: ContactFormData = { nome: '', email: '', mensagem: '' };
+import { sendContactMessage } from '../services/contact.ts';
 
 const ContactPage = () => {
-  const [formState, setFormState] = useState<ContactFormData>(initialFormState);
+  const [formState, setFormState] = useState({ name: '', email: '', message: '' });
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setFeedback(null);
-    setIsSubmitting(true);
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      setIsSubmitting(true);
+      setFeedback(null);
 
-    try {
-      await sendContactMessage(formState);
-      setFeedback({
-        type: 'success',
-        message: 'Recebemos sua mensagem! Entraremos em contato em breve.',
-      });
-      setFormState(initialFormState);
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível enviar sua mensagem agora. Tente novamente.';
+      try {
+        await sendContactMessage({
+          name: formState.name.trim(),
+          email: formState.email.trim(),
+          message: formState.message.trim(),
+        });
 
-      setFeedback({
-        type: 'error',
-        message: errorMessage,
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+        setFeedback({
+          type: 'success',
+          message: 'Recebemos sua mensagem! Entraremos em contato em breve.',
+        });
+        setFormState({ name: '', email: '', message: '' });
+      } catch (error) {
+        setFeedback({
+          type: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Não foi possível enviar sua mensagem. Tente novamente.',
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [formState]
+  );
 
   return (
     <Container
@@ -236,12 +250,12 @@ const ContactPage = () => {
               <Stack component="form" spacing={{ xs: 2.5, sm: 3, md: 3 }} onSubmit={handleSubmit}>
                 <TextField
                   label="Nome"
-                  value={formState.nome}
+                  name="name"
+                  value={formState.name}
                   onChange={(event) =>
-                    setFormState((prev) => ({ ...prev, nome: event.target.value }))
+                    setFormState((prev) => ({ ...prev, name: event.target.value }))
                   }
                   required
-                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -252,12 +266,12 @@ const ContactPage = () => {
                 <TextField
                   label="E-mail"
                   type="email"
+                  name="email"
                   value={formState.email}
                   onChange={(event) =>
                     setFormState((prev) => ({ ...prev, email: event.target.value }))
                   }
                   required
-                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -269,12 +283,12 @@ const ContactPage = () => {
                   label="Mensagem"
                   multiline
                   minRows={4}
-                  value={formState.mensagem}
+                  name="message"
+                  value={formState.message}
                   onChange={(event) =>
-                    setFormState((prev) => ({ ...prev, mensagem: event.target.value }))
+                    setFormState((prev) => ({ ...prev, message: event.target.value }))
                   }
                   required
-                  disabled={isSubmitting}
                   fullWidth
                   sx={{
                     '& .MuiInputBase-input': {
@@ -298,17 +312,9 @@ const ContactPage = () => {
                   {isSubmitting ? 'Enviando...' : 'Enviar mensagem'}
                 </Button>
                 {feedback && (
-                  <Alert
-                    severity={feedback.type}
-                    sx={{
-                      fontSize: { xs: '0.85rem', sm: '0.9rem' },
-                      '& .MuiAlert-message': {
-                        width: '100%',
-                      },
-                    }}
-                  >
-                    {feedback.message}
-                  </Alert>
+                  <Box>
+                    <Alert severity={feedback.type}>{feedback.message}</Alert>
+                  </Box>
                 )}
               </Stack>
             </Paper>

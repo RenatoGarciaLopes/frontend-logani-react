@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useRef, useMemo, useState, useEffect } from 'react';
 
+import Alert from '@mui/material/Alert';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
@@ -29,8 +30,11 @@ import {
   mapShippingOptionToAddShippingRequest,
 } from '../utils/checkout.ts';
 import {
-  getAuthData,
+  updateOrder,
   getMyOrders,
+  getAuthData,
+  createOrder,
+  cancelOrder,
   updateClient,
   getClientData,
   saveClientData,
@@ -42,7 +46,27 @@ import {
   type CheckoutPaymentMethod,
 } from '../services/api.ts';
 
-const API_URL = import.meta.env.VITE_API_URL;
+const FRONT_URL = import.meta.env.VITE_FRONT_URL;
+const ACTIVE_CHECKOUT_ERROR_MESSAGE =
+  'Já existe um checkout ativo para este pedido. Cancele ou aguarde expirar antes de criar outro.';
+
+const extractApiErrorMessage = (error: unknown): string | null => {
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as {
+      response?: { data?: { error?: { message?: string }; message?: string } };
+      message?: string;
+    };
+
+    return (
+      maybeError.response?.data?.error?.message ||
+      maybeError.response?.data?.message ||
+      maybeError.message ||
+      null
+    );
+  }
+
+  return null;
+};
 
 const BRAZILIAN_STATES = [
   'AC',
@@ -95,6 +119,12 @@ const Checkout = () => {
   const [discountCode, setDiscountCode] = useState('');
   const [isDeliveryExpanded, setIsDeliveryExpanded] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isApplyingCoupon, setIsApplyingCoupon] = useState(false);
+  const [couponFeedback, setCouponFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [isFreeShippingCoupon, setIsFreeShippingCoupon] = useState(false);
 
   // Dados do formulário de entrega
   const clientData = getClientData();
@@ -242,14 +272,14 @@ const Checkout = () => {
 
   // Calcula frete automaticamente quando há pedido e CEP válido
   useEffect(() => {
-    if (currentOrder && deliveryForm.postalCode) {
+    if (currentOrder && deliveryForm.postalCode && !isFreeShippingCoupon) {
       const cleanPostalCode = deliveryForm.postalCode.replace(/\D/g, '');
       if (cleanPostalCode.length === 8 && !selectedShipping && !isCalculatingShipping) {
         handleCalculateShipping(cleanPostalCode);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentOrder, deliveryForm.postalCode]);
+  }, [currentOrder, deliveryForm.postalCode, isFreeShippingCoupon]);
 
   const cartItems = useMemo(() => {
     if (!currentOrder) return [];
@@ -338,7 +368,7 @@ const Checkout = () => {
   };
 
   const handleCalculateShipping = async (postalCode?: string) => {
-    if (!currentOrder) return;
+    if (!currentOrder || isFreeShippingCoupon) return;
 
     const cep = postalCode || deliveryForm.postalCode.replace(/\D/g, '');
     if (cep.length !== 8) {
@@ -370,21 +400,170 @@ const Checkout = () => {
     }
   };
 
+  const sendShippingRequestBeforeCoupon = async () => {
+    if (!currentOrder) return;
+
+    const cep = deliveryForm.postalCode.replace(/\D/g, '');
+    if (cep.length !== 8) {
+      return;
+    }
+
+    try {
+      await calculateShipping({
+        to_postal_code: cep,
+        order_id: currentOrder.order_id,
+      });
+    } catch (error) {
+      console.error('Erro ao enviar requisição de frete antes do cupom:', error);
+    }
+  };
+
+  const getCouponErrorMessage = (error: unknown): string => {
+    return extractApiErrorMessage(error) || 'Não foi possível aplicar o cupom. Tente novamente.';
+  };
+
+  const recreateOrderForCheckout = async () => {
+    if (!currentOrder) {
+      throw new Error('Pedido atual não encontrado para recriação.');
+    }
+
+    await cancelOrder(currentOrder.order_id);
+
+    const itemsPayload = currentOrder.items.map((item) => ({
+      product_id: item.product_id,
+      quantity: item.quantity,
+    }));
+
+    if (itemsPayload.length === 0) {
+      throw new Error('Pedido atual não possui itens para recriação.');
+    }
+
+    const newOrderResponse = await createOrder({ items: itemsPayload });
+    return newOrderResponse.data;
+  };
+
+  const handleApplyCoupon = async () => {
+    if (!currentOrder || !discountCode.trim()) return;
+
+    setIsApplyingCoupon(true);
+    setCouponFeedback(null);
+    const couponCode = discountCode.trim().toUpperCase();
+    const isFreeShipping = couponCode === 'FRETEZERO';
+
+    // Se for o cupom FRETEZERO, aplica apenas no frontend sem chamar a API
+    if (isFreeShipping) {
+      // Define o estado do cupom de frete grátis
+      setIsFreeShippingCoupon(true);
+
+      // Cria uma opção de frete grátis e seleciona automaticamente
+      const freeShippingOption: ShippingOption = {
+        id: 0,
+        name: 'Frete Grátis',
+        price: '0',
+        custom_price: '0',
+        currency: 'BRL',
+        delivery_time: 0,
+        custom_delivery_time: 0,
+        company: {
+          id: 0,
+          name: 'Frete Grátis',
+          picture: '',
+        },
+        final_price: 0,
+        final_delivery_time: 0,
+      };
+      setShippingOptions([freeShippingOption]);
+      setSelectedShipping(freeShippingOption);
+
+      setCouponFeedback({
+        type: 'success',
+        message: 'Cupom FRETEZERO aplicado com sucesso!',
+      });
+      setIsApplyingCoupon(false);
+      return;
+    }
+
+    // Para outros cupons, tenta aplicar através da API
+    try {
+      await sendShippingRequestBeforeCoupon();
+      await updateOrder(currentOrder.order_id, { couponCode });
+      await fetchPendingOrders();
+
+      // Reseta as opções de frete para recalcular
+      setShippingOptions([]);
+      setSelectedShipping(null);
+      // Recalcula o frete se houver CEP válido
+      const cep = deliveryForm.postalCode.replace(/\D/g, '');
+      if (cep.length === 8) {
+        handleCalculateShipping(cep);
+      }
+
+      setCouponFeedback({
+        type: 'success',
+        message: 'Cupom aplicado com sucesso!',
+      });
+    } catch (error) {
+      console.error('Erro ao aplicar cupom:', error);
+      setCouponFeedback({
+        type: 'error',
+        message: getCouponErrorMessage(error),
+      });
+    } finally {
+      setIsApplyingCoupon(false);
+    }
+  };
+
   const handlePayNow = async () => {
     if (!currentOrder || !selectedShipping) return;
 
-    try {
-      setIsProcessingPayment(true);
+    const latestClient = getClientData();
+    const customerId = latestClient.asaasId;
 
-      // Atualiza o endereço do cliente se houver mudanças
-      const latestClient = getClientData();
-      const customerId = latestClient.asaasId;
+    if (!customerId) {
+      console.error('ID do cliente (ASAAS) não encontrado no localStorage.');
+      alert('Não foi possível iniciar o pagamento. Faça login novamente.');
+      return;
+    }
 
-      if (!customerId) {
-        console.error('ID do cliente (ASAAS) não encontrado no localStorage.');
-        alert('Não foi possível iniciar o pagamento. Faça login novamente.');
-        return;
+    const shippingPayload = mapShippingOptionToAddShippingRequest(selectedShipping);
+    const chargeTypes: CheckoutChargeType[] = ['DETACHED', 'INSTALLMENT'];
+    const paymentMethods: CheckoutPaymentMethod[] = ['PIX', 'CREDIT_CARD'];
+
+    const buildCheckoutPayload = (externalReference: string) => ({
+      customer: customerId,
+      chargeTypes,
+      minutesToExpire: 60,
+      callback: {
+        successUrl: `${FRONT_URL}/sucesso`,
+        cancelUrl: `${FRONT_URL}/checkout`,
+        expiredUrl: `${FRONT_URL}/checkout`,
+      },
+      paymentMethods,
+      installment: {
+        maxInstallmentCount: 5,
+      },
+      externalReference,
+    });
+
+    const requestCheckoutUrl = async (orderId: string, externalReference: string) => {
+      // Se for frete grátis (id === 0), não envia a requisição de adicionar frete
+      if (selectedShipping.id !== 0) {
+        await addOrderShipping(orderId, shippingPayload);
       }
+      const checkoutPayload = buildCheckoutPayload(externalReference);
+      const checkoutResponse = await createCheckout(checkoutPayload);
+      const checkoutUrl = checkoutResponse?.data?.checkout_url;
+
+      if (!checkoutUrl) {
+        throw new Error('URL do checkout não foi retornada.');
+      }
+
+      return checkoutUrl;
+    };
+
+    setIsProcessingPayment(true);
+
+    try {
       const newAddress = mapDeliveryFormToClientAddress({
         postalCode: deliveryForm.postalCode,
         number: deliveryForm.number,
@@ -399,40 +578,33 @@ const Checkout = () => {
         await updateClient({ address: newAddress });
       }
 
-      // Adiciona o frete ao pedido
-      const shippingPayload = mapShippingOptionToAddShippingRequest(selectedShipping);
-      await addOrderShipping(currentOrder.order_id, shippingPayload);
-
-      // const frontUrl = window.location.origin;
-      const chargeTypes: CheckoutChargeType[] = ['DETACHED', 'INSTALLMENT'];
-      const paymentMethods: CheckoutPaymentMethod[] = ['PIX', 'CREDIT_CARD'];
-
-      const checkoutPayload = {
-        customer: customerId,
-        chargeTypes,
-        minutesToExpire: 60,
-        callback: {
-          successUrl: `${API_URL}/sucesso`,
-          cancelUrl: `${API_URL}/falha`,
-          expiredUrl: `${API_URL}/expirado`,
-        },
-        paymentMethods,
-        installment: {
-          maxInstallmentCount: 5,
-        },
-        externalReference: currentOrder.external_reference,
-      };
-
-      const checkoutResponse = await createCheckout(checkoutPayload);
-      const checkoutUrl = checkoutResponse?.data?.checkout_url;
-
-      if (!checkoutUrl) {
-        throw new Error('URL do checkout não foi retornada.');
-      }
-
+      const checkoutUrl = await requestCheckoutUrl(
+        currentOrder.order_id,
+        currentOrder.external_reference
+      );
       window.location.href = checkoutUrl;
     } catch (error) {
+      const errorMessage = extractApiErrorMessage(error);
+
+      if (errorMessage?.includes(ACTIVE_CHECKOUT_ERROR_MESSAGE)) {
+        try {
+          const newOrderData = await recreateOrderForCheckout();
+          const checkoutUrl = await requestCheckoutUrl(
+            newOrderData.order_id,
+            newOrderData.external_reference
+          );
+          await fetchPendingOrders();
+          window.location.href = checkoutUrl;
+          return;
+        } catch (conflictError) {
+          console.error('Erro ao reiniciar checkout após cancelar pedido:', conflictError);
+          alert('Não foi possível reiniciar o checkout. Tente novamente em instantes.');
+          return;
+        }
+      }
+
       console.error('Erro ao processar pagamento:', error);
+      alert('Não foi possível processar o pagamento. Tente novamente.');
     } finally {
       setIsProcessingPayment(false);
     }
@@ -694,7 +866,9 @@ const Checkout = () => {
                             {option.company.name} - {option.name}
                           </Typography>
                           <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            {formatDeliveryTime(option.final_delivery_time)}
+                            {option.id === 0
+                              ? 'Frete grátis aplicado'
+                              : formatDeliveryTime(option.final_delivery_time)}
                           </Typography>
                         </Box>
                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
@@ -706,7 +880,9 @@ const Checkout = () => {
                 </Stack>
               ) : (
                 <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                  Informe o CEP para calcular o frete
+                  {isFreeShippingCoupon
+                    ? 'Frete grátis aplicado via cupom'
+                    : 'Informe o CEP para calcular o frete'}
                 </Typography>
               )}
             </Box>
@@ -817,12 +993,31 @@ const Checkout = () => {
                 size="small"
                 placeholder="Código de desconto ou cartão de oferta"
                 value={discountCode}
-                onChange={(e) => setDiscountCode(e.target.value)}
+                onChange={(e) => {
+                  setDiscountCode(e.target.value);
+                  // Se o campo for limpo, reseta o estado do frete grátis
+                  if (!e.target.value.trim()) {
+                    setIsFreeShippingCoupon(false);
+                    setShippingOptions([]);
+                    setSelectedShipping(null);
+                  }
+                }}
               />
-              <Button variant="outlined" size="small" sx={{ textTransform: 'none', minWidth: 100 }}>
-                Aplicar
+              <Button
+                variant="outlined"
+                size="small"
+                sx={{ textTransform: 'none', minWidth: 100 }}
+                onClick={handleApplyCoupon}
+                disabled={!discountCode.trim() || isApplyingCoupon}
+              >
+                {isApplyingCoupon ? 'Aplicando...' : 'Aplicar'}
               </Button>
             </Stack>
+            {couponFeedback && (
+              <Alert severity={couponFeedback.type} sx={{ mb: 3, py: 0.5 }}>
+                {couponFeedback.message}
+              </Alert>
+            )}
 
             {/* Resumo de Valores */}
             <Stack spacing={1.5} sx={{ mb: 3 }}>

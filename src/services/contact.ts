@@ -1,53 +1,29 @@
-const FORM_SUBMIT_ENDPOINT = 'https://formsubmit.co/ajax/renato.lopes232025@gmail.com';
+import { api, API_URL } from './api.ts';
+import { extractErrorMessage } from '../utils/errorHandler.ts';
 
-export interface ContactFormData {
-  nome: string;
+export interface ContactRequest {
+  name: string;
   email: string;
-  mensagem: string;
+  message: string;
 }
 
-interface FormSubmitResponse {
-  success: string;
-  message?: string;
+export interface ContactResponse {
+  message: string;
 }
 
-const GENERIC_ERROR_MESSAGE =
-  'Não foi possível enviar sua mensagem agora. Tente novamente em instantes.';
+export const sendContactMessage = async (payload: ContactRequest): Promise<ContactResponse> => {
+  if (!API_URL) {
+    throw new Error('URL da API não configurada');
+  }
 
-export const sendContactMessage = async (payload: ContactFormData): Promise<void> => {
   try {
-    const response = await fetch(FORM_SUBMIT_ENDPOINT, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        Nome: payload.nome,
-        Email: payload.email,
-        Mensagem: payload.mensagem,
-        _subject: 'Contato via site Logani',
-        _template: 'box',
-      }),
-    });
-
-    const responseBody = (await response.json().catch(() => null)) as FormSubmitResponse | null;
-
-    if (!response.ok) {
-      const errorMessage = responseBody?.message ?? GENERIC_ERROR_MESSAGE;
-      throw new Error(errorMessage);
-    }
-
-    if (!responseBody || responseBody.success !== 'true') {
-      const errorMessage = responseBody?.message ?? GENERIC_ERROR_MESSAGE;
-      throw new Error(errorMessage);
-    }
+    const response = await api.post<ContactResponse>('/emails/contact/', payload);
+    return response.data;
   } catch (error) {
-    if (error instanceof Error && error.message) {
-      throw error;
-    }
-    throw new Error(GENERIC_ERROR_MESSAGE);
+    const errorMessage = extractErrorMessage(
+      error,
+      'Não foi possível enviar sua mensagem. Tente novamente em instantes.'
+    );
+    throw new Error(errorMessage);
   }
 };
-
-
