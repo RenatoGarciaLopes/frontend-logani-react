@@ -279,11 +279,20 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
       }
 
       // Preenche os campos automaticamente (exceto complemento)
-      formik.setFieldValue('address.address', data.logradouro || '');
-      formik.setFieldValue('address.province', data.bairro || '');
-      formik.setFieldValue('address.city', data.localidade || '');
-      formik.setFieldValue('address.state', data.uf || '');
-      // Não preenche o complemento automaticamente
+      // Atualiza todos os valores de uma vez sem validar
+      formik.setValues(
+        {
+          ...formik.values,
+          address: {
+            ...formik.values.address,
+            address: data.logradouro || '',
+            province: data.bairro || '',
+            city: data.localidade || '',
+            state: data.uf || '',
+          },
+        },
+        false
+      );
 
       // Limpa erros se houver
       setError(null);
@@ -291,7 +300,16 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
       // Marca o CEP como validado para habilitar os outros campos
       setCepValidated(true);
 
-      // Marca os campos como tocados e valida
+      // Aguarda um tick para garantir que os valores foram atualizados
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Valida os campos preenchidos primeiro
+      await formik.validateField('address.address');
+      await formik.validateField('address.province');
+      await formik.validateField('address.city');
+      await formik.validateField('address.state');
+
+      // Marca os campos como tocados apenas após a validação
       formik.setTouched({
         ...formik.touched,
         address: {
@@ -303,12 +321,6 @@ const ClientRegistrationModal = ({ open, onClose, onSuccess }: ClientRegistratio
           state: true,
         },
       });
-
-      // Valida os campos preenchidos
-      await formik.validateField('address.address');
-      await formik.validateField('address.province');
-      await formik.validateField('address.city');
-      await formik.validateField('address.state');
     } catch (err) {
       setError('Erro ao buscar CEP. Tente novamente.');
       setCepValidated(false);
